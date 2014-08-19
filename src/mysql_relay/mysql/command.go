@@ -1,0 +1,88 @@
+package mysql
+
+import (
+    "encoding/binary"
+    //"fmt"
+)
+
+const (
+  COM_SLEEP byte = iota; COM_QUIT
+  COM_INIT_DB; COM_QUERY; COM_FIELD_LIST
+  COM_CREATE_DB; COM_DROP_DB; COM_REFRESH; COM_SHUTDOWN; COM_STATISTICS
+  COM_PROCESS_INFO; COM_CONNECT; COM_PROCESS_KILL; COM_DEBUG; COM_PING
+  COM_TIME; COM_DELAYED_INSERT; COM_CHANGE_USER; COM_BINLOG_DUMP
+  COM_TABLE_DUMP; COM_CONNECT_OUT; COM_REGISTER_SLAVE
+  COM_STMT_PREPARE; COM_STMT_EXECUTE; COM_STMT_SEND_LONG_DATA; COM_STMT_CLOSE
+  COM_STMT_RESET; COM_SET_OPTION; COM_STMT_FETCH
+  COM_DAEMON; COM_BINLOG_DUMP_GTID
+)
+
+type Command interface {
+    CommandType() byte
+    Outputable
+}
+
+type CommandPacket struct {
+    PacketHeader
+    Command
+}
+
+type ComRegisterSlave struct {
+/*
+http://dev.mysql.com/doc/internals/en/com-register-slave.html
+1              [15] COM_REGISTER_SLAVE
+4              server-id
+1              slaves hostname length
+string[$len]   slaves hostname
+1              slaves user len
+string[$len]   slaves user
+1              slaves password len
+string[$len]   slaves password
+2              slaves mysql-port
+4              replication rank
+4              master-id
+*/
+    ServerId  uint32
+}
+
+func (self *ComRegisterSlave) ToBuffer(buffer []byte) (ret []byte, err error) {
+    buffer[0] = COM_REGISTER_SLAVE
+    binary.LittleEndian.PutUint32(buffer[1:], self.ServerId)
+    for i := range buffer[5:17] {
+        buffer[i] = 0
+    }
+    return buffer[0:17], nil
+}
+
+func (self *ComRegisterSlave) CommandType() byte {
+    return COM_REGISTER_SLAVE
+}
+
+type ComBinglogDump struct {
+/*
+http://dev.mysql.com/doc/internals/en/com-binlog-dump.html
+1              [12] COM_BINLOG_DUMP
+4              binlog-pos
+2              flags
+4              server-id
+string[EOF]    binlog-filename
+*/
+    BinlogPos       uint32
+    Flags           uint16
+    ServerId        uint32
+    BinlogFilename  string
+}
+
+func (self *ComBinglogDump) ToBuffer(buffer []byte) (ret []byte, err error) {
+    buffer[0] = COM_BINLOG_DUMP
+    binary.LittleEndian.PutUint32(buffer[1:], self.BinlogPos)
+    binary.LittleEndian.PutUint16(buffer[5:], self.Flags)
+    binary.LittleEndian.PutUint32(buffer[7:], self.ServerId)
+    copy(buffer[11:], []byte(self.BinlogFilename))
+    ret = buffer[0:11+len(self.BinlogFilename)]
+    return
+}
+
+func (self *ComBinglogDump) CommandType() byte {
+    return COM_BINLOG_DUMP
+}
