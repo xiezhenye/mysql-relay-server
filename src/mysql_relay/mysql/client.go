@@ -53,30 +53,41 @@ func (self *Client) Auth(handshake HandShakePacket) (ret OkPacket, err error) {
 }
 
 func (self *Client) Command(command Command) (ret OkPacket, err error) {
-    cmdPacket := CommandPacket{Command:command}
-    err = WritePacketTo(&cmdPacket, self.Conn, self.Buffer[:])
-    if err != nil {
-        return
-    }
-    packet, err := ReadGenericResponsePacket(self.Conn, self.Buffer[:])
-    if err != nil {
-        return
-    }
-    ret, err = packet.ToOk()
+    ret, err = ExecCommand(command, self.Conn, self.Buffer[:])
     return
 }
 
-func (self *Client)DumpBinlog(cmdBinlogDump ComBinglogDump) (ret <-chan BinlogEventPacket, errs <-chan error) {
-    logChan := make(chan BinlogEventPacket)
-    errChan := make(chan error)
-    ret = logChan
-    errs = errChan
+
+type BinlogEventStream struct {
+    ret  chan BinlogEventPacket
+    errs chan error
+    canRead chan struct{}
+}
+
+func (self *BinlogEventStream) GetChan() <-chan BinlogEventPacket {
+    return self.ret
+}
+
+func (self *BinlogEventStream) Continue() {
+    self.canRead<-struct{}{}
+}
+
+func (self *BinlogEventStream) GetError() error {
+    err, _ := <- self.errs
+    return err
+}
+
+func (self *Client)DumpBinlog(cmdBinlogDump ComBinglogDump) (ret BinlogEventStream) {
+    ret.ret  = make(chan BinlogEventPacket)
+    ret.errs = make(chan error)
+    ret.canRead = make(chan struct{})
     go func() {
-        err := DumpBinlogTo(cmdBinlogDump, self.Conn, logChan, self.Buffer[:])
+        err := DumpBinlogTo(cmdBinlogDump, self.Conn, ret.canRead, ret.ret, self.Buffer[:])
         if err != nil {
-            errChan<-err
-            close(errChan)
+            ret.errs<-err
         }
+        close(ret.errs)
+        close(ret.canRead)
     }()
     return
 }

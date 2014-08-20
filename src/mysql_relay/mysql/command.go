@@ -2,6 +2,7 @@ package mysql
 
 import (
     "encoding/binary"
+    "io"
     //"fmt"
 )
 
@@ -86,3 +87,18 @@ func (self *ComBinglogDump) ToBuffer(buffer []byte) (ret []byte, err error) {
 func (self *ComBinglogDump) CommandType() byte {
     return COM_BINLOG_DUMP
 }
+
+func ExecCommand(command Command, readWriter io.ReadWriter, buffer []byte) (ret OkPacket, err error) {
+    cmdPacket := CommandPacket{Command:command}
+    err = WritePacketTo(&cmdPacket, readWriter, buffer)
+    if err != nil {
+        return
+    }
+    packet, err := ReadGenericResponsePacket(readWriter, buffer)
+    if err != nil {
+        return
+    }
+    ret, err = packet.ToOk()
+    return
+}
+

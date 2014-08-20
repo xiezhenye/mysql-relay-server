@@ -4,7 +4,7 @@ import (
     "errors"
     "encoding/binary"
     "io"
-    "io/ioutil"
+    
     "crypto/sha1"
     "fmt"
 )
@@ -58,7 +58,12 @@ const (
 type PacketHeader struct {
     PacketSeq    byte
     PacketLength uint32
+}
+
+type PayloadPacket struct {
+    PacketHeader
     BodyLength   int
+    Pos          int
 }
 
 func (self *PacketHeader) FromUint32(n uint32) {
@@ -199,7 +204,7 @@ func ReadPacket(header PacketHeader, reader io.Reader, buffer []byte) (err error
            return 
         }
         if int(header.PacketLength) != bytesRead {
-            err = BAD_PACKET
+            err = BYTES_READ_NOT_CORRECT
             return
         }
     } else {
@@ -208,7 +213,7 @@ func ReadPacket(header PacketHeader, reader io.Reader, buffer []byte) (err error
            return 
         }
         if len(buffer) != bytesRead {
-            err = BAD_PACKET
+            err = BYTES_READ_NOT_CORRECT
             return    
         }
     }
@@ -436,29 +441,29 @@ func readLenencInt(reader io.Reader) (ret uint64, n int, err error) {
         return
     }
     if buf[0] < '\xfb' {
-        ret, n = uint64(buffer[0]), 1
+        ret, n = uint64(buf[0]), 1
         return
     }
-    if buffer[0] == '\xfc' {
+    if buf[0] == '\xfc' {
         _, err = reader.Read(buf[0:2])
         if err != nil {
             return
         }
-        ret, n = uint64(ENDIAN.Uint16(buffer[:])), 3
+        ret, n = uint64(ENDIAN.Uint16(buf[:])), 3
     }
-    if buffer[0] == '\xfd' {
+    if buf[0] == '\xfd' {
         _, err = reader.Read(buf[1:4])
         if err != nil {
             return
         }
-        ret, n = uint64(ENDIAN.Uint32(buffer[:]) & 0x00ffffff), 4
+        ret, n = uint64(ENDIAN.Uint32(buf[:]) & 0x00ffffff), 4
     }
-    if buffer[0] == '\xfe' {
+    if buf[0] == '\xfe' {
         _, err = reader.Read(buf[0:8])
         if err != nil {
             return
         }
-        ret, n = uint64(ENDIAN.Uint64(buffer[:])), 9
+        ret, n = uint64(ENDIAN.Uint64(buf[:])), 9
     }
     ret, n = 0, 0
     return
@@ -476,19 +481,21 @@ func (self GenericResponsePacket) ToOk() (ret OkPacket, err error) {
         ret.PacketHeader = self.PacketHeader
         err = ret.FromBuffer(self.Buffer)
     case GRP_ERR:
-        errPacket, err := self.ToErr()
+        var errPacket ErrPacket
+        errPacket, err = self.ToErr()
         if err != nil {
-            return ret, err
+            return
         }
         err = errPacket.ToError()
     case GRP_EOF:
-        eofPacket, err := self.ToEof()
+        var eofPacket EofPacket
+        eofPacket, err = self.ToEof()
         if err != nil {
-            return ret, err
+            return
         }
         err = eofPacket.ToError()
     default:
-        err = BAD_PACKET
+        err = NOT_GENERIC_RESPONSE_PACKET
     }
     return
 }
@@ -534,66 +541,14 @@ func Auth(authPacket AuthPacket, readWriter io.ReadWriter, buffer []byte) (ret O
         return
     }
     if packet.PacketSeq != authPacket.PacketSeq + 1 {
-        err = BAD_PACKET
+        err = PACKET_SEQ_NOT_CORRECT
         return
     }
     ret, err = packet.ToOk()
     return
 }
-
-func ExecCommand(command Command, readWriter io.ReadWriter, buffer []byte) (ret OkPacket, err error) {
-    cmdPacket := CommandPacket{Command:command}
-    err = WritePacketTo(&cmdPacket, readWriter, buffer)
-    if err != nil {
-        return
-    }
-    packet, err := ReadGenericResponsePacket(readWriter, buffer)
-    if err != nil {
-        return
-    }
-    ret, err = packet.ToOk()
-    return
-}
-
-func DumpBinlogTo(cmdBinlogDump ComBinglogDump, readWriter io.ReadWriter, ret chan<-BinlogEventPacket, buffer []byte) (err error){
-    defer close(ret)
-    cmdPacket := CommandPacket{Command:&cmdBinlogDump}
-    err = WritePacketTo(&cmdPacket, readWriter, buffer)
-    if err != nil {
-        return
-    }
-    for {
-        var header PacketHeader
-        header, err = ReadPacketHeader(readWriter)
-        if err != nil {
-            return
-        }
-        err = ReadPacket(header, readWriter, buffer)
-        if err != nil {
-            return
-        }
-        if buffer[0] != GRP_OK {
-            var errPacket ErrPacket
-            errPacket.PacketHeader = header
-            errPacket.FromBuffer(buffer)
-            err = errPacket.ToError()
-            return
-        }
-        var event BinlogEventPacket
-        event.PacketHeader = header
-        err = event.FromBuffer(buffer)
-        if err != nil {
-            return
-        }
-        ret<-event
-        reader := event.GetReader(readWriter, buffer)
-        io.Copy(ioutil.Discard, &reader)
-    }
-    return
-}
-
 type OkPacket struct {
-    PacketHeader
+    PayloadPacket
 // http://dev.mysql.com/doc/internals/en/packet-OK_Packet.html
     AffectedRows uint64
     LastInsertId uint64
@@ -603,7 +558,7 @@ type OkPacket struct {
 
 func (self *OkPacket) FromBuffer(buffer []byte) (err error) {
     if buffer[0] != GRP_OK {
-        err = BAD_PACKET
+        err = NOT_OK_PACKET
         return
     }
     var n int
@@ -620,48 +575,45 @@ func (self *OkPacket) FromBuffer(buffer []byte) (err error) {
     return   
 }
 
-type OkPacketReader struct {
+type PayloadReader struct {
     reader  io.Reader
-    header  PacketHeader
-    buffer  []byte
-    p       int
-    offset  int
+    header  *PayloadPacket
+    firstBuffer  []byte
 }
 
-func (self PacketHeader) GetReader(reader io.Reader, buffer []byte) OkPacketReader {
-    return OkPacketReader{
+func (self *PayloadPacket) GetReader(reader io.Reader, buffer []byte, withHeader bool) PayloadReader {
+    if withHeader {
+        self.Pos = 0
+    } else {
+        self.Pos = int(self.PacketLength) - self.BodyLength
+    }
+    return PayloadReader{
         reader: reader,
         header: self,
-        buffer: buffer,
-        p: 0,
-        offset: int(self.PacketLength) - self.BodyLength,
+        firstBuffer: buffer,
     }
 }
 
-func (self *OkPacketReader) Read(buffer []byte) (n int, err error) {
-    if self.p >= self.header.BodyLength {
+func (self *PayloadReader) Read(buffer []byte) (n int, err error) {
+    if self.header.Pos >= int(self.header.PacketLength) {
         return 0, io.EOF
     }
     var copied int
     var srcEnd int
     var destEnd int
     for destEnd < len(buffer) {
-        if self.offset > 0 {
+        if self.header.Pos < len(self.firstBuffer) {
             // has remained src buffer
             srcEnd = int(self.header.PacketLength)
-            if srcEnd > len(self.buffer) {
-                srcEnd = len(self.buffer)
+            if srcEnd > len(self.firstBuffer) {
+                srcEnd = len(self.firstBuffer)
             }
-            copied = copy(buffer[destEnd:], self.buffer[self.offset:srcEnd])
-            self.p+= copied
+            copied = copy(buffer[destEnd:], self.firstBuffer[self.header.Pos:srcEnd])
+            self.header.Pos+= copied
             destEnd+= copied
-            self.offset+= copied
-            if self.offset >= srcEnd {
-                self.offset = 0
-            }
         } else {
             // read data
-            srcRem := self.header.BodyLength - self.p
+            srcRem := int(self.header.PacketLength) - self.header.Pos
             destRem := len(buffer) - destEnd
             rem := srcRem
             if srcRem > destRem {
@@ -669,15 +621,15 @@ func (self *OkPacketReader) Read(buffer []byte) (n int, err error) {
             }
             // directly read data to dest buffer
             copied, err = self.reader.Read(buffer[destEnd:destEnd + rem])
-            destEnd+= copied
-            self.p+= copied
             if err != nil {
                 return destEnd, err
             }
+            destEnd+= copied
+            self.header.Pos+= copied
         }
-        if self.p >= self.header.BodyLength {
+        if self.header.Pos >= int(self.header.PacketLength) {
             // reach the end
-            return destEnd, nil
+            return destEnd, io.EOF
         }
     }
     return destEnd, nil
@@ -693,7 +645,7 @@ type ErrPacket struct {
 
 func (self *ErrPacket) FromBuffer(buffer []byte) (err error) {
     if buffer[0] != GRP_ERR {
-        err = BAD_PACKET
+        err = NOT_ERR_PACKET
         return
     }
     self.ErrorCode = ENDIAN.Uint16(buffer[1:])
@@ -716,7 +668,7 @@ type EofPacket struct {
 
 func (self *EofPacket) FromBuffer(buffer []byte) (err error) {
     if buffer[0] != GRP_EOF {
-        err = BAD_PACKET
+        err = NOT_EOF_PACKET
         return
     }
     self.WarningCount = ENDIAN.Uint16(buffer[1:])

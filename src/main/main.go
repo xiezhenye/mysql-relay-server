@@ -3,6 +3,8 @@ package main
 import (
     "mysql_relay/mysql"
     "fmt"
+    "io/ioutil"
+    "io"
 )
 
 func main() {
@@ -30,19 +32,26 @@ func main() {
         return
     }
     fmt.Println(ok)
-    events, errChan := c.DumpBinlog(mysql.ComBinglogDump{
-        BinlogFilename:"log-bin.000001",
-        BinlogPos:4,
-        ServerId:c.ServerId,
-    })
+    
+    ok, err = c.Command(&mysql.QueryCommand{"SET @master_binlog_checksum='NONE';"})
     if err != nil {
         fmt.Println("ERR:"+err.Error())
         return
     }
-    for event := range events {
-        fmt.Println(event)
+    fmt.Println(ok)
+    
+    stream := c.DumpBinlog(mysql.ComBinglogDump{
+        BinlogFilename:"log-bin.000005",
+        BinlogPos:568,//5,
+        ServerId:c.ServerId,
+    })
+    for event := range stream.GetChan() {
+        //fmt.Println(event)
+        reader := event.GetReader(c.Conn, c.Buffer[:], true)
+        io.Copy(ioutil.Discard, &reader)
+        stream.Continue()
     }
-    err, _ = <- errChan
+    err = stream.GetError()
     if err != nil {
         fmt.Println(err)
     }

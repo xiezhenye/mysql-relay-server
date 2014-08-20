@@ -9,6 +9,20 @@ http://dev.mysql.com/doc/internals/en/com-query-response.html
 http://dev.mysql.com/doc/internals/en/protocoltext-resultset.html
 */
 
+type QueryCommand struct {
+    Query string
+}
+
+func (self *QueryCommand) CommandType() byte {
+    return COM_QUERY
+}
+
+func (self *QueryCommand) ToBuffer(buffer []byte) (ret []byte, err error) {
+    buffer[0] = COM_QUERY
+    n := copy(buffer[1:], []byte(self.Query))
+    ret = buffer[0:n + 1]
+    return
+}
 
 type ColumnCountPacket struct {
     PacketHeader
@@ -44,40 +58,40 @@ max length of schema, table, name is 64, so total size will be less than the buf
 }
 
 func (self *ColumnDefinitionPacket) FromBuffer(buffer []byte) (err error) {
-    var strLen int
+    var strLen uint64
     var p      int
     var n      int
     p = 0
     // n should always be 1
     strLen, n = getLenencInt(buffer[p:])
     p+= n
-    self.Catalog = string(buffer[p:p+strLen])
-    p+= strLen
+    self.Catalog = string(buffer[p:p+int(strLen)])
+    p+= int(strLen)
     
     strLen, n = getLenencInt(buffer[p:])
     p+= n
-    self.Schema = string(buffer[p:p+strLen])
-    p+= strLen
+    self.Schema = string(buffer[p:p+int(strLen)])
+    p+= int(strLen)
     
     strLen, n = getLenencInt(buffer[p:])
     p+= n
-    self.Table = string(buffer[p:p+strLen])
-    p+= strLen
+    self.Table = string(buffer[p:p+int(strLen)])
+    p+= int(strLen)
     
     strLen, n = getLenencInt(buffer[p:])
     p+= n
-    self.OrgTable = string(buffer[p:p+strLen])
-    p+= strLen
+    self.OrgTable = string(buffer[p:p+int(strLen)])
+    p+= int(strLen)
     
     strLen, n = getLenencInt(buffer[p:])
     p+= n
-    self.Name = string(buffer[p:p+strLen])
-    p+= strLen
+    self.Name = string(buffer[p:p+int(strLen)])
+    p+= int(strLen)
     
     strLen, n = getLenencInt(buffer[p:])
     p+= n
-    self.OrgName = string(buffer[p:p+strLen])
-    p+= strLen
+    self.OrgName = string(buffer[p:p+int(strLen)])
+    p+= int(strLen)
     
     self.FixedLength, n = getLenencInt(buffer[p:])
     p+= n
@@ -97,10 +111,8 @@ func (self *ColumnDefinitionPacket) FromBuffer(buffer []byte) (err error) {
     self.Decimals = buffer[p]
     p+= 1
     
-    self.Filler = ENDIAN.Uint16(self.buffer[p:])
+    self.Filler = ENDIAN.Uint16(buffer[p:])
     p+= 2
-    
-    self.BodyLength = int(self.PacketLength) -  p
     return
 }
 
@@ -112,15 +124,15 @@ type ResultRowPacket struct {
 }
 
 func (self *ResultRowPacket) Init(columnCount int) {
-    self.Columns = make([]string, columnCount)
+    self.Columns = make([][]byte, columnCount)
 }
 
 func (self *ResultRowPacket) FromBuffer(buffer []byte) (err error) {
-    if self.PacketLength > len(buffer) {
+    if int(self.PacketLength) > len(buffer) {
         err = BUFFER_NOT_SUFFICIENT
         return
     }
-    var strLen int
+    var strLen uint64
     var p      int
     var n      int
     p = 0
@@ -133,13 +145,14 @@ func (self *ResultRowPacket) FromBuffer(buffer []byte) (err error) {
             continue
         }
         p+= n
-        self.Columns[i] = buffer[p:p+strLen]
-        p+= strLen
+        self.Columns[i] = buffer[p:p+int(strLen)]
+        p+= int(strLen)
     }
+    return
 }
 
 func (self *ResultRowPacket) FromReader(reader io.Reader) (err error) {
-    if self.Buffer == nil || len(self.Buffer) < self.PacketLength {
+    if self.Buffer == nil || len(self.Buffer) < int(self.PacketLength) {
         self.Buffer = make([]byte, self.PacketLength)
     }
     _, err = reader.Read(self.Buffer)
@@ -147,4 +160,5 @@ func (self *ResultRowPacket) FromReader(reader io.Reader) (err error) {
         return
     }
     err = self.FromBuffer(self.Buffer)
+    return
 }

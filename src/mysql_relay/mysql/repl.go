@@ -1,9 +1,8 @@
 package mysql
 
 import (
-    //"io"
-    //"encoding/binary"
-    //"fmt"
+    "io"
+    "fmt"
 )
 
 const (
@@ -18,8 +17,9 @@ const (
     LOG_EVENT_NO_FILTER_F = 0x0100
     LOG_EVENT_MTS_ISOLATE_F = 0x0200
 )
+
 type BinlogEventPacket struct {
-    PacketHeader
+    PayloadPacket
     Timestamp  uint32
     EventType  byte
     ServerId   uint32
@@ -39,3 +39,49 @@ func (self *BinlogEventPacket) FromBuffer(buffer []byte) (err error) {
     return
 }
 
+func DumpBinlogTo(cmdBinlogDump ComBinglogDump, readWriter io.ReadWriter, canRead <-chan struct{}, ret chan<-BinlogEventPacket, buffer []byte) (err error){
+    defer close(ret)
+    cmdPacket := CommandPacket{Command:&cmdBinlogDump}
+    err = WritePacketTo(&cmdPacket, readWriter, buffer)
+    if err != nil {
+        return
+    }
+    seq := byte(0)
+    for {
+        seq++
+        var header PacketHeader
+        header, err = ReadPacketHeader(readWriter)
+        if err != nil {
+            return
+        }
+        if header.PacketSeq != seq {
+            err = PACKET_SEQ_NOT_CORRECT
+            fmt.Println(header)
+            return 
+        }
+        err = ReadPacket(header, readWriter, buffer)
+        if err != nil {
+            return
+        }
+        if buffer[0] != GRP_OK {
+            var errPacket ErrPacket
+            errPacket.PacketHeader = header
+            err = errPacket.FromBuffer(buffer)
+            if err != nil {
+                return
+            }
+            err = errPacket.ToError()
+            return
+        }
+        var event BinlogEventPacket
+        event.PacketHeader = header
+        err = event.FromBuffer(buffer)
+        if err != nil {
+            return
+        }
+        fmt.Println(event)
+        ret<-event
+        <-canRead
+    }
+    return
+}
