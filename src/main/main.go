@@ -2,9 +2,8 @@ package main
 
 import (
     "mysql_relay/mysql"
+    "mysql_relay/relay"
     "fmt"
-    "io/ioutil"
-    "io"
 )
 
 func main() {
@@ -20,40 +19,8 @@ func main() {
         fmt.Println(err)
         return
     }
-    handshake, err := c.Handshake()
-    if err != nil {
-        fmt.Println("ERR:"+err.Error())
-        return
-    }
-    var ok mysql.OkPacket
-    ok, err = c.Auth(handshake)
-    if err != nil {
-        fmt.Println("ERR:"+err.Error())
-        return
-    }
-    fmt.Println(ok)
-    
-    ok, err = c.Command(&mysql.QueryCommand{"SET @master_binlog_checksum='NONE';"})
-    if err != nil {
-        fmt.Println("ERR:"+err.Error())
-        return
-    }
-    fmt.Println(ok)
-    
-    stream := c.DumpBinlog(mysql.ComBinglogDump{
-        BinlogFilename:"log-bin.000005",
-        BinlogPos:568,//5,
-        ServerId:c.ServerId,
-    })
-    for event := range stream.GetChan() {
-        //fmt.Println(event)
-        reader := event.GetReader(c.Conn, c.Buffer[:], true)
-        io.Copy(ioutil.Discard, &reader)
-        stream.Continue()
-    }
-    err = stream.GetError()
-    if err != nil {
-        fmt.Println(err)
-    }
+    var relay relay.BinlogRelay
+    relay.Init(c, "D:\\test\\binlog", "log-bin.000001")
+    relay.Run()
 }
 

@@ -3,6 +3,9 @@ package mysql
 import (
     "io"
     "fmt"
+    "strings"
+    "errors"
+    "strconv"
 )
 
 const (
@@ -18,14 +21,83 @@ const (
     LOG_EVENT_MTS_ISOLATE_F = 0x0200
 )
 
+const (
+    UNKNOWN_EVENT byte = 0x00
+    START_EVENT_V3 = 0x01
+    QUERY_EVENT = 0x02
+    STOP_EVENT = 0x03
+    ROTATE_EVENT = 0x04
+    INTVAR_EVENT = 0x05
+    LOAD_EVENT = 0x06
+    SLAVE_EVENT = 0x07
+    CREATE_FILE_EVENT = 0x08
+    APPEND_BLOCK_EVENT = 0x09
+    EXEC_LOAD_EVENT = 0x0a
+    DELETE_FILE_EVENT = 0x0b
+    NEW_LOAD_EVENT = 0x0c
+    RAND_EVENT = 0x0d
+    USER_VAR_EVENT = 0x0e
+    FORMAT_DESCRIPTION_EVENT = 0x0f
+    XID_EVENT = 0x10
+    BEGIN_LOAD_QUERY_EVENT = 0x11
+    EXECUTE_LOAD_QUERY_EVENT = 0x12
+    TABLE_MAP_EVENT = 0x13
+    WRITE_ROWS_EVENTv0 = 0x14
+    UPDATE_ROWS_EVENTv0 = 0x15
+    DELETE_ROWS_EVENTv0 = 0x16
+    WRITE_ROWS_EVENTv1 = 0x17
+    UPDATE_ROWS_EVENTv1 = 0x18
+    DELETE_ROWS_EVENTv1 = 0x19
+    INCIDENT_EVENT = 0x1a
+    HEARTBEAT_EVENT = 0x1b
+    IGNORABLE_EVENT = 0x1c
+    ROWS_QUERY_EVENT = 0x1d
+    WRITE_ROWS_EVENTv2 = 0x1e
+    UPDATE_ROWS_EVENTv2 = 0x1f
+    DELETE_ROWS_EVENTv2 = 0x20
+    GTID_EVENT = 0x21
+    ANONYMOUS_GTID_EVENT = 0x22
+    PREVIOUS_GTIDS_EVENT = 0x23
+)
+
 type BinlogEventPacket struct {
     PayloadPacket
-    Timestamp  uint32
-    EventType  byte
-    ServerId   uint32
-    EventSize  uint32
-    LogPos     uint32
-    Flags      uint16
+    Timestamp    uint32
+    EventType    byte
+    ServerId     uint32
+    EventSize    uint32
+    LogPos       uint32
+    Flags        uint16
+    //
+    HasChecksum  bool
+}
+
+
+func ParseBinlogName(name string) (prefix string, n int64, err error) {
+    //"log-bin.000005"
+    p := strings.LastIndex(name, ".")
+    if p < 0 {
+        err = errors.New("not valid binlog name")
+        return
+    }
+    prefix = name[0:p]
+    n, err = strconv.ParseInt(name[p:], 10, 0)
+    return
+}
+
+func ToBinlogName(prefix string, n int64) string {
+    return fmt.Sprintf("%s.%06d", prefix, n)
+}
+
+func NextBinlogName(name string) (next string, err error) {
+    var prefix string
+    var n int64
+    prefix, n, err = ParseBinlogName(name)
+    if err != nil {
+        return
+    }
+    next = ToBinlogName(prefix, n + 1)
+    return
 }
 
 func (self *BinlogEventPacket) FromBuffer(buffer []byte) (err error) {
@@ -37,6 +109,78 @@ func (self *BinlogEventPacket) FromBuffer(buffer []byte) (err error) {
     self.Flags     = ENDIAN.Uint16(buffer[18:])
     self.BodyLength = int(self.PacketLength) - 20
     return
+}
+
+func (self *BinlogEventPacket) IsFake() bool {
+    return (self.EventType == ROTATE_EVENT) &&
+           (self.Flags & LOG_EVENT_ARTIFICIAL_F != 0) &&
+           (self.Timestamp == 0)
+}
+
+type FormatDescriptionEvent struct {
+    BinlogVersion          uint16
+    MysqlServerVersion     string
+    CreateTimestamp        uint32
+    EventHeaderLength      byte
+    EventTypeHeaderLength  [40]byte
+}
+
+type RotateEvent struct {
+    Name            string
+    Position        uint64
+}
+
+func (self *RotateEvent) Parse(packet *BinlogEventPacket, buffer []byte)(err error) {
+    if packet.EventType != ROTATE_EVENT {
+        err = NOT_SUCH_EVENT
+        return
+    }
+    p := int(packet.PacketLength) - packet.BodyLength
+    self.Position = ENDIAN.Uint64(buffer[p:])
+    end := packet.PacketLength
+    fmt.Println(packet)
+    
+    fmt.Println(buffer[:end])
+    fmt.Println(packet.IsFake())
+    if packet.HasChecksum{
+        end -= 4
+    }
+    self.Name = string((buffer[p + 8:end]))
+    fmt.Println(self)
+    return
+}
+
+
+func (self *FormatDescriptionEvent) Parse(packet *BinlogEventPacket, buffer []byte) (err error) {
+    /*
+     http://dev.mysql.com/doc/internals/en/format-description-event.html
+      size of FormatDescriptionEvent is 92 now
+     */
+    if packet.EventType != FORMAT_DESCRIPTION_EVENT {
+        err = NOT_SUCH_EVENT
+        return
+    }
+    p := int(packet.PacketLength) - packet.BodyLength
+    self.BinlogVersion = ENDIAN.Uint16(buffer[p:])
+    p+= 2
+    self.MysqlServerVersion = strings.TrimRight(string(buffer[p:p+50]), "\x00")
+    p+= 50
+    self.CreateTimestamp = ENDIAN.Uint32(buffer[p:])
+    p+= 4
+    self.EventHeaderLength = buffer[p]
+    p+= 1
+    copy(self.EventTypeHeaderLength[:], buffer[p:p+35])
+    fmt.Println(packet)
+    fmt.Println(self)
+    fmt.Println(buffer[:packet.PacketLength])
+    return
+}
+
+func (self *FormatDescriptionEvent) HasBinlogChecksum(packet *BinlogEventPacket) bool {
+    formatDescriptionEventSize := int(self.EventTypeHeaderLength[FORMAT_DESCRIPTION_EVENT - 1])
+    tailSize := int(packet.EventSize) - int(self.EventHeaderLength) - formatDescriptionEventSize
+    fmt.Println(tailSize)
+    return tailSize > 1
 }
 
 func DumpBinlogTo(cmdBinlogDump ComBinglogDump, readWriter io.ReadWriter, canRead <-chan struct{}, ret chan<-BinlogEventPacket, buffer []byte) (err error){
@@ -56,7 +200,6 @@ func DumpBinlogTo(cmdBinlogDump ComBinglogDump, readWriter io.ReadWriter, canRea
         }
         if header.PacketSeq != seq {
             err = PACKET_SEQ_NOT_CORRECT
-            fmt.Println(header)
             return 
         }
         err = ReadPacket(header, readWriter, buffer)
@@ -79,7 +222,6 @@ func DumpBinlogTo(cmdBinlogDump ComBinglogDump, readWriter io.ReadWriter, canRea
         if err != nil {
             return
         }
-        fmt.Println(event)
         ret<-event
         <-canRead
     }

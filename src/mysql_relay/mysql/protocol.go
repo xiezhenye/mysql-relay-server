@@ -4,7 +4,6 @@ import (
     "errors"
     "encoding/binary"
     "io"
-    
     "crypto/sha1"
     "fmt"
 )
