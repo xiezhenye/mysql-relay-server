@@ -58,6 +58,7 @@ const (
     GTID_EVENT = 0x21
     ANONYMOUS_GTID_EVENT = 0x22
     PREVIOUS_GTIDS_EVENT = 0x23
+    BINLOG_EVENT_END     = 0x24
 )
 
 type BinlogEventPacket struct {
@@ -123,6 +124,7 @@ type FormatDescriptionEvent struct {
     CreateTimestamp        uint32
     EventHeaderLength      byte
     EventTypeHeaderLength  [40]byte
+    ChecksumAlgorism       byte
 }
 
 type RotateEvent struct {
@@ -169,19 +171,21 @@ func (self *FormatDescriptionEvent) Parse(packet *BinlogEventPacket, buffer []by
     p+= 4
     self.EventHeaderLength = buffer[p]
     p+= 1
-    copy(self.EventTypeHeaderLength[:], buffer[p:p+35])
+    copy(self.EventTypeHeaderLength[:], buffer[p:p+int(BINLOG_EVENT_END)])
+    
+    formatDescriptionEventSize := int(self.EventTypeHeaderLength[FORMAT_DESCRIPTION_EVENT - 1])
+    
+    tailSize := int(packet.EventSize) - int(self.EventHeaderLength) - formatDescriptionEventSize
+    if tailSize == (1 + 4) {
+        p = int(packet.PacketLength) - packet.BodyLength + formatDescriptionEventSize
+        self.ChecksumAlgorism = buffer[p]
+    }
     fmt.Println(packet)
     fmt.Println(self)
     fmt.Println(buffer[:packet.PacketLength])
     return
 }
 
-func (self *FormatDescriptionEvent) HasBinlogChecksum(packet *BinlogEventPacket) bool {
-    formatDescriptionEventSize := int(self.EventTypeHeaderLength[FORMAT_DESCRIPTION_EVENT - 1])
-    tailSize := int(packet.EventSize) - int(self.EventHeaderLength) - formatDescriptionEventSize
-    fmt.Println(tailSize)
-    return tailSize > 1
-}
 
 func DumpBinlogTo(cmdBinlogDump ComBinglogDump, readWriter io.ReadWriter, canRead <-chan struct{}, ret chan<-BinlogEventPacket, buffer []byte) (err error){
     defer close(ret)

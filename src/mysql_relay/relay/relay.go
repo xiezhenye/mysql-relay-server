@@ -91,7 +91,7 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<-wr
         if event.EventType == mysql.FORMAT_DESCRIPTION_EVENT {
             var formatDescription mysql.FormatDescriptionEvent
             formatDescription.Parse(&event, self.client.Buffer[:])
-            hasBinlogChecksum = formatDescription.HasBinlogChecksum(&event)
+            hasBinlogChecksum = (formatDescription.ChecksumAlgorism == 1)
             // a new binlog file
             if !rotateUsed {
                 // missing last rotate event
