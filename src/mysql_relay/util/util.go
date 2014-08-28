@@ -30,10 +30,9 @@ func (self *AutoDelayer) Reset() {
 }
 
 type Joinable func()error
-
 type Barrier []Joinable
-
 type JoinError []error
+
 func (self JoinError) Error() string {
     s := ""
     for _, e := range self {
@@ -44,13 +43,12 @@ func (self JoinError) Error() string {
     return s
 }
 
-func (self Join) Run() error {
+func (self Barrier) Run() error {
     errChan := make(chan struct{int;error},len(self))
     ret := make([]error, len(self))
     for i, f := range self {
         go func(f Joinable) {
-            err := f()
-            errChan<-struct{int; error}{i, err}
+            errChan<-struct{int; error}{i, f()}
         }(f)
     }
     hasError := false
