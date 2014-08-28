@@ -21,6 +21,9 @@ func main() {
     }
     var relay relay.BinlogRelay
     relay.Init(c, "D:\\test\\binlog", "log-bin.000001")
-    relay.Run()
+    err = relay.Run()
+    if err != nil {
+        fmt.Println(err)
+    }
 }
 

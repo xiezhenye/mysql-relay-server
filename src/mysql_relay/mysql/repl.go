@@ -140,15 +140,10 @@ func (self *RotateEvent) Parse(packet *BinlogEventPacket, buffer []byte)(err err
     p := int(packet.PacketLength) - packet.BodyLength
     self.Position = ENDIAN.Uint64(buffer[p:])
     end := packet.PacketLength
-    fmt.Println(packet)
-    
-    fmt.Println(buffer[:end])
-    fmt.Println(packet.IsFake())
     if packet.HasChecksum{
         end -= 4
     }
     self.Name = string((buffer[p + 8:end]))
-    fmt.Println(self)
     return
 }
 
@@ -180,9 +175,6 @@ func (self *FormatDescriptionEvent) Parse(packet *BinlogEventPacket, buffer []by
         p = int(packet.PacketLength) - packet.BodyLength + formatDescriptionEventSize
         self.ChecksumAlgorism = buffer[p]
     }
-    fmt.Println(packet)
-    fmt.Println(self)
-    fmt.Println(buffer[:packet.PacketLength])
     return
 }
 

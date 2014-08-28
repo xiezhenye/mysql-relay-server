@@ -2,8 +2,9 @@ package relay
 
 import
 (
-    "fmt"
+//    "fmt"
     "mysql_relay/mysql"
+    "mysql_relay/util"
     "os"
     "io"
     "io/ioutil"
@@ -17,8 +18,8 @@ type BinlogRelay struct {
 }
 
 type writeTask struct {
-    name   string
     buffer []byte
+    name   string
     size   int
     seq    byte
 }
@@ -29,15 +30,12 @@ func (self *BinlogRelay) Init(client mysql.Client, localDir string, startFile st
     self.startFile = startFile
 }
 
-func (self *BinlogRelay) writeBinlog(bufChanIn chan<-[]byte, bufChanOut <-chan writeTask) {
+func (self *BinlogRelay) writeBinlog(bufChanIn chan<-[]byte, bufChanOut <-chan writeTask) (err error){
     name := ""
     seq := byte(0)
     var f *os.File
-    var err error
     defer func(){
-        if err != nil {
-            fmt.Println(err)
-        }
+        close(bufChanIn)
     }()
     for task := range bufChanOut {
         if task.name != name {
@@ -50,33 +48,32 @@ func (self *BinlogRelay) writeBinlog(bufChanIn chan<-[]byte, bufChanOut <-chan w
             if err != nil {
                 return
             }
-            if seq != task.seq {
-                //
-            } else {
-                fmt.Println("cont")
-            }
+            
             // binlog header
             _, err = f.Write([]byte{'\xfe','b','i','n'})
             if err != nil {
                 return
             }
             name = task.name
-            seq = task.seq
+            
         }
         _, err = f.Write(task.buffer[:task.size])
         if err != nil {
             return
         }
+        if seq != task.seq {
+            seq = task.seq
+        } else {
+            f.Sync()
+        }
         bufChanIn<-task.buffer
     }
+    return
 }
 
-func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<-writeTask) {
-    var err error
+func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<-writeTask) (err error) {
     defer func(){
-        if err != nil {
-            fmt.Println(err)
-        }
+        close(bufChanOut)
     }()
     stream := self.client.DumpBinlog(mysql.ComBinglogDump{
         BinlogFilename: self.startFile,
@@ -142,9 +139,10 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<-wr
     if err != nil {
         return
     }
+    return
 }
 
-func (self *BinlogRelay) Run() {
+func (self *BinlogRelay) Run() error {
     nBuffers := 8
     bufChanIn := make(chan []byte, nBuffers)
     bufChanOut := make(chan writeTask, nBuffers)
@@ -153,8 +151,10 @@ func (self *BinlogRelay) Run() {
     for i := 0; i < nBuffers; i++ {
         bufChanIn<-self.buf[i*sz : i*sz+sz]
     }
-    go self.dumpBinlog(bufChanIn, bufChanOut)
-    self.writeBinlog(bufChanIn, bufChanOut)
+    return util.Barrier{
+        func() error { return self.dumpBinlog(bufChanIn, bufChanOut) },
+        func() error { return self.writeBinlog(bufChanIn, bufChanOut) },
+    }.Run()
 }
 
 
