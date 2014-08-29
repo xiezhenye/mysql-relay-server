@@ -29,8 +29,8 @@ type ColumnCountPacket struct {
     ColumnCount  uint64
 }
 
-func (self *ColumnCountPacket) FromBuffer(buffer []byte) (err error) {
-    self.ColumnCount, _ = getLenencInt(buffer)
+func (self *ColumnCountPacket) FromBuffer(buffer []byte) (read int, err error) {
+    self.ColumnCount, read = getLenencInt(buffer)
     return
 }
 
@@ -57,7 +57,7 @@ max length of schema, table, name is 64, so total size will be less than the buf
     Filler       uint16
 }
 
-func (self *ColumnDefinitionPacket) FromBuffer(buffer []byte) (err error) {
+func (self *ColumnDefinitionPacket) FromBuffer(buffer []byte) (read int, err error) {
     var strLen uint64
     var p      int
     var n      int
@@ -113,6 +113,7 @@ func (self *ColumnDefinitionPacket) FromBuffer(buffer []byte) (err error) {
     
     self.Filler = ENDIAN.Uint16(buffer[p:])
     p+= 2
+    read = p
     return
 }
 
@@ -127,7 +128,7 @@ func (self *ResultRowPacket) Init(columnCount int) {
     self.Columns = make([][]byte, columnCount)
 }
 
-func (self *ResultRowPacket) FromBuffer(buffer []byte) (err error) {
+func (self *ResultRowPacket) FromBuffer(buffer []byte) (read int, err error) {
     if int(self.PacketLength) > len(buffer) {
         err = BUFFER_NOT_SUFFICIENT
         return
@@ -148,6 +149,7 @@ func (self *ResultRowPacket) FromBuffer(buffer []byte) (err error) {
         self.Columns[i] = buffer[p:p+int(strLen)]
         p+= int(strLen)
     }
+    read = p
     return
 }
 
@@ -159,6 +161,6 @@ func (self *ResultRowPacket) FromReader(reader io.Reader) (err error) {
     if err != nil {
         return
     }
-    err = self.FromBuffer(self.Buffer)
+    _, err = self.FromBuffer(self.Buffer)
     return
 }

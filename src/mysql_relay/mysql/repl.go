@@ -101,7 +101,7 @@ func NextBinlogName(name string) (next string, err error) {
     return
 }
 
-func (self *BinlogEventPacket) FromBuffer(buffer []byte) (err error) {
+func (self *BinlogEventPacket) FromBuffer(buffer []byte) (read int, err error) {
     self.Timestamp = ENDIAN.Uint32(buffer[1:])
     self.EventType = buffer[5]
     self.ServerId  = ENDIAN.Uint32(buffer[6:])
@@ -109,6 +109,7 @@ func (self *BinlogEventPacket) FromBuffer(buffer []byte) (err error) {
     self.LogPos    = ENDIAN.Uint32(buffer[14:])
     self.Flags     = ENDIAN.Uint16(buffer[18:])
     self.BodyLength = int(self.PacketLength) - 20
+    read = 20
     return
 }
 
@@ -205,7 +206,7 @@ func DumpBinlogTo(cmdBinlogDump ComBinglogDump, readWriter io.ReadWriter, canRea
         if buffer[0] != GRP_OK {
             var errPacket ErrPacket
             errPacket.PacketHeader = header
-            err = errPacket.FromBuffer(buffer)
+            _, err = errPacket.FromBuffer(buffer)
             if err != nil {
                 return
             }
@@ -214,7 +215,7 @@ func DumpBinlogTo(cmdBinlogDump ComBinglogDump, readWriter io.ReadWriter, canRea
         }
         var event BinlogEventPacket
         event.PacketHeader = header
-        err = event.FromBuffer(buffer)
+        _, err = event.FromBuffer(buffer)
         if err != nil {
             return
         }

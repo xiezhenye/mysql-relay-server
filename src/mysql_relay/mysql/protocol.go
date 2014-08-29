@@ -95,7 +95,7 @@ type InputPacket interface {
 }
 
 type Inputable interface {
-    FromBuffer(buffer []byte) error
+    FromBuffer(buffer []byte) (int, error)
 }
 
 func ReadPacketFrom(packet InputPacket, reader io.Reader, buffer []byte) (err error) {
@@ -108,7 +108,7 @@ func ReadPacketFrom(packet InputPacket, reader io.Reader, buffer []byte) (err er
     if err != nil {
         return err
     }
-    err = packet.FromBuffer(buffer)
+    _, err = packet.FromBuffer(buffer)
     return
 }
 
@@ -269,7 +269,7 @@ func (self GenericResponsePacket) ToOk() (ret OkPacket, err error) {
     switch self.PacketType {
     case GRP_OK:
         ret.PacketHeader = self.PacketHeader
-        err = ret.FromBuffer(self.Buffer)
+        _, err = ret.FromBuffer(self.Buffer)
     case GRP_ERR:
         var errPacket ErrPacket
         errPacket, err = self.ToErr()
@@ -296,7 +296,7 @@ func (self GenericResponsePacket) ToErr() (ret ErrPacket, err error) {
         err = NOT_SUCH_PACET_TYPE
         return
     }
-    err = ret.FromBuffer(self.Buffer)
+    _, err = ret.FromBuffer(self.Buffer)
     return
 }
 
@@ -306,7 +306,7 @@ func (self GenericResponsePacket) ToEof() (ret EofPacket, err error) {
         err = NOT_SUCH_PACET_TYPE
         return
     }
-    err = ret.FromBuffer(self.Buffer)
+    _, err = ret.FromBuffer(self.Buffer)
     return
 }
 
@@ -333,7 +333,7 @@ type OkPacket struct {
     Warnings     uint16
 }
 
-func (self *OkPacket) FromBuffer(buffer []byte) (err error) {
+func (self *OkPacket) FromBuffer(buffer []byte) (read int, err error) {
     if buffer[0] != GRP_OK {
         err = NOT_OK_PACKET
         return
@@ -349,6 +349,7 @@ func (self *OkPacket) FromBuffer(buffer []byte) (err error) {
     self.Warnings = ENDIAN.Uint16(buffer[p:])
     p+= 2
     self.BodyLength = int(self.PacketLength) -  p
+    read = p
     return   
 }
 
@@ -420,7 +421,7 @@ type ErrPacket struct {
     ErrorMessage  string
 }
 
-func (self *ErrPacket) FromBuffer(buffer []byte) (err error) {
+func (self *ErrPacket) FromBuffer(buffer []byte) (read int, err error) {
     if buffer[0] != GRP_ERR {
         err = NOT_ERR_PACKET
         return
@@ -428,6 +429,7 @@ func (self *ErrPacket) FromBuffer(buffer []byte) (err error) {
     self.ErrorCode = ENDIAN.Uint16(buffer[1:])
     self.SqlState = string(buffer[4:8])
     self.ErrorMessage = string(buffer[9:self.PacketLength])
+    read = int(self.PacketLength)
     return
 }
 
@@ -443,13 +445,14 @@ type EofPacket struct {
     StatusFlags  uint16
 }
 
-func (self *EofPacket) FromBuffer(buffer []byte) (err error) {
+func (self *EofPacket) FromBuffer(buffer []byte) (read int, err error) {
     if buffer[0] != GRP_EOF {
         err = NOT_EOF_PACKET
         return
     }
     self.WarningCount = ENDIAN.Uint16(buffer[1:])
-    self.StatusFlags = ENDIAN.Uint16(buffer[2:])
+    self.StatusFlags = ENDIAN.Uint16(buffer[3:])
+    read = 5
     return
 }
 

@@ -53,14 +53,14 @@ string[NUL]    auth plugin name
 }
 
 
-func (self *HandShakePacket) FromBuffer(buffer []byte) error {
+func (self *HandShakePacket) FromBuffer(buffer []byte) (int, error) {
     self.ProtoVer = uint8(buffer[0])
     if self.ProtoVer == 10 {
         return handShakeV10(buffer, self)
     } else if self.ProtoVer == 9 {
         return handShakeV9(buffer, self)
     } else {
-        return PROTOCOL_NOT_SUPPORTED
+        return 0, PROTOCOL_NOT_SUPPORTED
     }
 }
 
@@ -89,7 +89,7 @@ func ReadHandShake(reader io.Reader, buffer []byte) (handshake HandShakePacket, 
 }
 
 
-func handShakeV10(buffer []byte, handshake *HandShakePacket) (err error) {
+func handShakeV10(buffer []byte, handshake *HandShakePacket) (read int, err error) {
 /*
 http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeV10
 1              [0a] protocol version
@@ -117,12 +117,12 @@ string[NUL]    auth-plugin name
     var p = 1
     handshake.ServerVer = nullString(buffer[p:handshake.PacketLength])
     if int(handshake.PacketLength) - len(handshake.ServerVer) < 24 {
-        return BAD_HANDSHAKE_PACKET
+        return 0, BAD_HANDSHAKE_PACKET
     }
     p += len(handshake.ServerVer)
     handshake.ConnId = ENDIAN.Uint32(buffer)
     if buffer[p+12] != '\x00' {
-        return BAD_HANDSHAKE_PACKET
+        return 0, BAD_HANDSHAKE_PACKET
     }
     handshake.CapabilityFlags = uint32(ENDIAN.Uint16(buffer[p+13:]))
     if len(buffer) > p+15 {
@@ -133,7 +133,7 @@ string[NUL]    auth-plugin name
     authPluginDataLength := int(buffer[p+20])
     if (handshake.CapabilityFlags & CLIENT_PLUGIN_AUTH) == 0 {
         if authPluginDataLength != 0 {
-            return BAD_HANDSHAKE_PACKET    
+            return 0, BAD_HANDSHAKE_PACKET    
         }
     }
     if (handshake.CapabilityFlags & CLIENT_SECURE_CONNECTION) != 0 {
@@ -143,10 +143,11 @@ string[NUL]    auth-plugin name
     if (handshake.CapabilityFlags & CLIENT_PLUGIN_AUTH) != 0 {
         handshake.AuthPluginName = nullString(buffer[p+23+authPluginDataLength:])
     }
+    read = p+23+authPluginDataLength+len(handshake.AuthPluginName) + 1
     return
 }
 
-func handShakeV9(buffer []byte, handshake *HandShakePacket) (err error) {
+func handShakeV9(buffer []byte, handshake *HandShakePacket) (read int, err error) {
 /*
 http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeV9
 1              [09] protocol_version
