@@ -66,4 +66,8 @@ func (self Barrier) Run() error {
     return nil
 }
 
+type NullAbleString struct {
+    str    string
+    isNull bool
+}
 

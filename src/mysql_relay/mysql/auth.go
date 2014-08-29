@@ -6,6 +6,7 @@ import (
     //"fmt"
 )
 type HandShakePacket struct {
+    
     PacketHeader
     ProtoVer        byte
     ServerVer       string
@@ -17,42 +18,7 @@ type HandShakePacket struct {
     AuthPluginName  string
 }
 
-type AuthPacket struct {
-     PacketHeader
-/*
-http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse
-4              capability flags, CLIENT_PROTOCOL_41 always set
-4              max-packet size
-1              character set
-string[23]     reserved (all [0])
-string[NUL]    username
-  if capabilities & CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA {
-lenenc-int     length of auth-response
-string[n]      auth-response
-  } else if capabilities & CLIENT_SECURE_CONNECTION {
-1              length of auth-response
-string[n]      auth-response
-  } else {
-string[NUL]    auth-response
-  }
-  if capabilities & CLIENT_CONNECT_WITH_DB {
-string[NUL]    database
-  }
-  if capabilities & CLIENT_PLUGIN_AUTH {
-string[NUL]    auth plugin name
-  }
-*/  
-    //CLIENT_SECURE_CONNECTION only
-    CapabilityFlags     uint32
-    MaxPacketSize       uint32
-    CharacterSet        byte
-    //[23]byte
-    Username            string
-    AuthResponse        string
-    Database            string
-    AuthPluginName      string
-}
-
+const DEFAULT_AUTH_PLUGIN_NAME = "mysql_native_password"
 
 func (self *HandShakePacket) FromBuffer(buffer []byte) (int, error) {
     self.ProtoVer = uint8(buffer[0])
@@ -66,7 +32,62 @@ func (self *HandShakePacket) FromBuffer(buffer []byte) (int, error) {
 }
 
 func (self *HandShakePacket) ToBuffer(buffer []byte) (writen int, err error) {
-    // only support V10
+    // only support V10 with CLIENT_PLUGIN_AUTH | CLIENT_SECURE_CONNECTION
+/*
+http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeV10
+1              [0a] protocol version
+string[NUL]    server version
+4              connection id
+string[8]      auth-plugin-data-part-1
+1              [00] filler
+2              capability flags (lower 2 bytes)
+1              character set
+2              status flags
+2              capability flags (upper 2 bytes)
+1              length of auth-plugin-data
+string[10]     reserved (all [00])
+string[$len]   auth-plugin-data-part-2 ($len=MAX(13, length of auth-plugin-data - 8))
+string[NUL]    auth-plugin name
+*/    
+    if self.ProtoVer != 10 {
+        err = PROTOCOL_NOT_SUPPORTED
+        return
+    }
+    if self.CapabilityFlags & RELAY_CLIENT_CAP != RELAY_CLIENT_CAP {
+        err = SERVER_CAPABILITY_NOT_SUFFICIENT
+        return
+    }
+    n:= 0
+    ns := NullString(self.ServerVer)
+    buffer[0] = self.ProtoVer
+    p := 1
+    n, _ = ns.ToBuffer(buffer[p:])
+    p+= n
+    ENDIAN.PutUint32(buffer[p:], self.ConnId)
+    copy(buffer[p:], []byte(self.AuthString[0:8]))
+    p+= 8
+    buffer[p] = '\x00'
+    p+= 1
+    ENDIAN.PutUint16(buffer[p:], uint16(0x0000ffff & self.CapabilityFlags))
+    p+= 2
+    buffer[p] = self.CharacterSet
+    p+= 1
+    ENDIAN.PutUint16(buffer[p:], self.StatusFlags)
+    p+= 2
+    ENDIAN.PutUint16(buffer[p:], uint16(self.CapabilityFlags >> 16))
+    p+= 2
+    buffer[p] = byte(len(self.AuthString))
+    p+= 1
+    for i := 0; i < 10; i++ {
+        buffer[p + i] = '\x00'
+    }
+    p+= 10
+    copy(buffer[p:], []byte(self.AuthString[8:]))
+    p+= len(self.AuthString) - 8
+    ns = NullString(self.AuthPluginName)
+    n, _ = ns.ToBuffer(buffer[p:])
+    p+= n
+    writen = p
     return
 }
 
@@ -114,7 +135,7 @@ string[$len]   auth-plugin-data-part-2 ($len=MAX(13, length of auth-plugin-data 
   if capabilities & CLIENT_PLUGIN_AUTH {
 string[NUL]    auth-plugin name
   }
-*/
+*/    
     var p = 1
     var nslen int
     var ns NullString
@@ -162,6 +183,44 @@ string[NUL]    scramble
 */
     return
 }
+
+type AuthPacket struct {
+     PacketHeader
+/*
+http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse
+4              capability flags, CLIENT_PROTOCOL_41 always set
+4              max-packet size
+1              character set
+string[23]     reserved (all [0])
+string[NUL]    username
+  if capabilities & CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA {
+lenenc-int     length of auth-response
+string[n]      auth-response
+  } else if capabilities & CLIENT_SECURE_CONNECTION {
+1              length of auth-response
+string[n]      auth-response
+  } else {
+string[NUL]    auth-response
+  }
+  if capabilities & CLIENT_CONNECT_WITH_DB {
+string[NUL]    database
+  }
+  if capabilities & CLIENT_PLUGIN_AUTH {
+string[NUL]    auth plugin name
+  }
+*/  
+    //CLIENT_SECURE_CONNECTION only
+    CapabilityFlags     uint32
+    MaxPacketSize       uint32
+    CharacterSet        byte
+    //[23]byte
+    Username            string
+    AuthResponse        string
+    Database            string
+    AuthPluginName      string
+}
+
+
 
 func (self *AuthPacket) ToBuffer(buffer []byte) (writen int, err error) {
     var p int

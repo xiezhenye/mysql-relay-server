@@ -173,6 +173,12 @@ func (self *NullString) FromBuffer(buffer []byte) (int, error) {
     }
     return 0, BUFFER_NOT_SUFFICIENT
 }
+func (self *NullString) ToBuffer(buffer []byte) (int, error) {
+    copy(buffer, []byte(*self))
+    buffer[len(*self)] = '\x00'
+    return len(*self) + 1, nil
+}
+
 type LenencInt uint64
 func (self *LenencInt) FromBuffer(buffer []byte) (read int, err error) {
 /*
@@ -234,6 +240,7 @@ If the value is ≥ (2^24) and < (2^64) it is stored as fe + 8-byte integer.
 }
 
 type LenencString string
+
 func (self *LenencString) FromBuffer(buffer []byte) (read int, err error) {
     var n LenencInt
     read, err = n.FromBuffer(buffer)
@@ -255,7 +262,7 @@ func (self *LenencString) ToBuffer(buffer []byte) (writen int, err error) {
     writen+= len(*self)
     return
 }
-
+/*
 func readLenencInt(reader io.Reader) (ret uint64, n int, err error) {
     var buf [8]byte
     _, err = reader.Read(buf[0:1])
@@ -290,7 +297,7 @@ func readLenencInt(reader io.Reader) (ret uint64, n int, err error) {
     ret, n = 0, 0
     return
 }
-
+*/
 type GenericResponsePacket struct {
     PacketHeader
     PacketType  byte

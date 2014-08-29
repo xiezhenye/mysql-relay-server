@@ -1,8 +1,9 @@
 package mysql
 
 import (
-    //"io"
+    "io"
 )
+
 
 /*
 http://dev.mysql.com/doc/internals/en/com-query-response.html
@@ -36,14 +37,8 @@ func (self *ColumnCountPacket) FromBuffer(buffer []byte) (read int, err error) {
     return
 }
 
-type ColumnDefinitionPacket struct {
-/*
-http://dev.mysql.com/doc/internals/en/com-query-response.html#packet-Protocol::ColumnDefinition41
-as
-http://dev.mysql.com/doc/refman/5.0/en/identifiers.html
-max length of schema, table, name is 64, so total size will be less than the buffer size
-*/
-    PacketHeader
+
+type ColumnDefinition struct {
     Catalog      string
     Schema       string
     Table        string
@@ -57,6 +52,17 @@ max length of schema, table, name is 64, so total size will be less than the buf
     Flags        uint16
     Decimals     byte
     Filler       uint16
+}
+
+type ColumnDefinitionPacket struct {
+/*
+http://dev.mysql.com/doc/internals/en/com-query-response.html#packet-Protocol::ColumnDefinition41
+as
+http://dev.mysql.com/doc/refman/5.0/en/identifiers.html
+max length of schema, table, name is 64, so total size will be less than the buffer size
+*/
+    PacketHeader
+    ColumnDefinition
 }
 
 func (self *ColumnDefinitionPacket) FromBuffer(buffer []byte) (read int, err error) {
@@ -119,11 +125,21 @@ func (self *ColumnDefinitionPacket) FromBuffer(buffer []byte) (read int, err err
 
 type ResultRowPacket struct {
     PacketHeader
-    Columns []string
+    ResultRow
+}
+
+type ResultRow struct {
+    Values     []Value
+}
+
+type Value struct {
+    Definition  *ColumnDefinition
+    Value       string
+    IsNull      bool
 }
 
 func (self *ResultRowPacket) Init(columnCount int) {
-    self.Columns = make([]string, columnCount)
+    self.Values = make([]Value, columnCount)
 }
 
 func (self *ResultRowPacket) FromBuffer(buffer []byte) (read int, err error) {
@@ -132,30 +148,28 @@ func (self *ResultRowPacket) FromBuffer(buffer []byte) (read int, err error) {
         return
     }
     p := 0
-    for i := range self.Columns {
+    for i := range self.Values {
         // n should always be 1
         var leStr LenencString
         n, _err := leStr.FromBuffer(buffer[p:])
         p+= n
         if _err != nil {
-            self.Columns[i] = ""
+            self.Values[i] = Value{ Value: "", IsNull: true }
         } else {
-            self.Columns[i] = string(leStr)
+            self.Values[i]= Value{ Value: string(leStr), IsNull: false } 
         }
     }
     read = p
     return
 }
-/*
-func (self *ResultRowPacket) FromReader(reader io.Reader) (err error) {
-    if self.Buffer == nil || len(self.Buffer) < int(self.PacketLength) {
-        self.Buffer = make([]byte, self.PacketLength)
-    }
-    _, err = reader.Read(self.Buffer)
-    if err != nil {
-        return
-    }
-    _, err = self.FromBuffer(self.Buffer)
-    return
+
+type ResultSet struct {
+    Columns      []ColumnDefinition
+    Rows         [][]string
 }
-*/
+
+type Cursor struct {
+    Reader       io.Reader
+    Columns      []ColumnDefinition
+    Rows         <-chan []string
+}
