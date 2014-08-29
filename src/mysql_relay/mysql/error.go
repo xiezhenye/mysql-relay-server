@@ -23,5 +23,7 @@ NOT_EOF_PACKET  = Error{8, "not eof packet"}
 BYTES_READ_NOT_CORRECT = Error{9, "bytes read not correct"}
 PACKET_SEQ_NOT_CORRECT = Error{10, "packet seq not correct"}
 NOT_SUCH_EVENT  = Error{11, "not such event"}
+PROTOCOL_NOT_SUPPORTED  = Error{12, "protocol not supported"}
+SERVER_CAPABILITY_NOT_SUFFICIENT = Error{13, "server capability not sufficient"}
 )
 
