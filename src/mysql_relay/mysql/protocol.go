@@ -161,18 +161,20 @@ func ReadPacketHeader(reader io.Reader) (header PacketHeader, err error) {
     return
 }
 
-func nullString(buffer []byte) string {
+type NullString string
+func (self *NullString) FromBuffer(buffer []byte) (int, error) {
     var i int
     var b byte
     for i, b = range(buffer) {
         if b == '\x00' {
-            return string(buffer[:i+1])
+            *self = NullString(buffer[:i])
+            return i+1, nil
         }
     }
-    return ""
+    return 0, BUFFER_NOT_SUFFICIENT
 }
-
-func getLenencInt(buffer []byte) (uint64, int) {
+type LenencInt uint64
+func (self *LenencInt) FromBuffer(buffer []byte) (read int, err error) {
 /*
 http://dev.mysql.com/doc/internals/en/integer.html#length-encoded-integer
 To convert a length-encoded integer into its numeric value, check the first byte:
@@ -181,23 +183,29 @@ If it is 0xfc, it is followed by a 2-byte integer.
 If it is 0xfd, it is followed by a 3-byte integer.
 If it is 0xfe, it is followed by a 8-byte integer.
 */
-    if buffer[0] < '\xfb' {
-        return uint64(buffer[0]), 1
+    switch buffer[0] {
+    case '\xfb':
+        *self = LenencInt(0)
+        return 1, LENENCINT_IS_NULL        
+    case '\xfc':
+        *self = LenencInt(uint64(ENDIAN.Uint16(buffer[1:])))
+        return 3, nil
+    case '\xfd':
+        *self = LenencInt(ENDIAN.Uint32(buffer[0:]) & 0x00ffffff)
+        return 4, nil
+    case '\xfe':
+        *self = LenencInt(ENDIAN.Uint64(buffer[1:]))
+        return 9, nil
+    case '\xff':
+        *self = LenencInt(0)
+        return 1, NOT_VALID_LENENCINT
+    default: // < '\xfb'
+        *self = LenencInt(buffer[0])
+        return 1, nil
     }
-    if buffer[0] == '\xfc' {
-        return uint64(ENDIAN.Uint16(buffer[1:])), 3
-    }
-    if buffer[0] == '\xfd' {
-        return uint64(ENDIAN.Uint32(buffer[0:]) & 0x00ffffff), 4
-    }
-    if buffer[0] == '\xfe' {
-        return uint64(ENDIAN.Uint64(buffer[1:])), 9
-    }
-    // TODO: deal with \xfb ( null ) or \xff
-    return 0, 0
 }
 
-func putLenencInt(n uint64, buffer []byte) int {
+func (self *LenencInt) ToBuffer(buffer []byte) (int, error) {
 /*
 http://dev.mysql.com/doc/internals/en/integer.html#length-encoded-integer
 To convert a number value into a length-encoded integer:
@@ -206,22 +214,46 @@ If the value is ≥ 251 and < (2^16), it is stored as fc + 2-byte integer.
 If the value is ≥ (2^16) and < (2^24), it is stored as fd + 3-byte integer.
 If the value is ≥ (2^24) and < (2^64) it is stored as fe + 8-byte integer.
 */
+    n := uint64(*self)
     if n < 251 {
         buffer[0] = byte(n)
-        return 1
+        return 1, nil
     }
     if n <= 0xffff {
         buffer[0] = '\xfc'
         ENDIAN.PutUint16(buffer[1:], uint16(n))
-        return 3
+        return 3, nil
     }
     if n <= 0xffffff {
         ENDIAN.PutUint32(buffer, uint32(n) | 0xfd000000)
-        return 4
+        return 4, nil
     }
     buffer[0] = '\xfe'
-    ENDIAN.PutUint64(buffer[1:], n)
-    return 9
+    ENDIAN.PutUint64(buffer[1:], uint64(n))
+    return 9, nil
+}
+
+type LenencString string
+func (self *LenencString) FromBuffer(buffer []byte) (read int, err error) {
+    var n LenencInt
+    read, err = n.FromBuffer(buffer)
+    if err != nil {
+        return
+    }
+    *self = LenencString(buffer[read:read + int(n)])
+    read+= len(*self)
+    return
+}
+
+func (self *LenencString) ToBuffer(buffer []byte) (writen int, err error) {
+    n := LenencInt(len(*self))
+    writen, err = n.ToBuffer(buffer)
+    if err != nil {
+        return
+    }
+    copy(buffer[writen:], []byte(*self))
+    writen+= len(*self)
+    return
 }
 
 func readLenencInt(reader io.Reader) (ret uint64, n int, err error) {
@@ -339,10 +371,13 @@ func (self *OkPacket) FromBuffer(buffer []byte) (read int, err error) {
         return
     }
     var n int
+    var leInt LenencInt
     p := 1
-    self.AffectedRows, n = getLenencInt(buffer[p:])
+    n, _ = leInt.FromBuffer(buffer[p:])
+    self.AffectedRows = uint64(leInt)
     p+= n
-    self.LastInsertId, n = getLenencInt(buffer[p:])
+    n, _ = leInt.FromBuffer(buffer[p:])
+    self.LastInsertId = uint64(leInt)
     p+= n
     self.StatusFlags = ENDIAN.Uint16(buffer[p:])
     p+= 2

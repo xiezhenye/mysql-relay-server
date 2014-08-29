@@ -3,6 +3,7 @@ package mysql
 import (
     "io"
     "crypto/sha1"
+    //"fmt"
 )
 type HandShakePacket struct {
     PacketHeader
@@ -115,11 +116,14 @@ string[NUL]    auth-plugin name
   }
 */
     var p = 1
-    handshake.ServerVer = nullString(buffer[p:handshake.PacketLength])
-    if int(handshake.PacketLength) - len(handshake.ServerVer) < 24 {
+    var nslen int
+    var ns NullString
+    nslen, _ = ns.FromBuffer(buffer[p:])
+    handshake.ServerVer = string(ns)
+    if int(handshake.PacketLength) - nslen < 24 {
         return 0, BAD_HANDSHAKE_PACKET
     }
-    p += len(handshake.ServerVer)
+    p += nslen
     handshake.ConnId = ENDIAN.Uint32(buffer)
     if buffer[p+12] != '\x00' {
         return 0, BAD_HANDSHAKE_PACKET
@@ -141,9 +145,10 @@ string[NUL]    auth-plugin name
         handshake.AuthString = string(buffer[p+23:p+22+authPluginDataLength])
     }
     if (handshake.CapabilityFlags & CLIENT_PLUGIN_AUTH) != 0 {
-        handshake.AuthPluginName = nullString(buffer[p+23+authPluginDataLength:])
+        nslen, _ = ns.FromBuffer(buffer[p+23+authPluginDataLength:])
+        handshake.AuthPluginName = string(ns)
     }
-    read = p+23+authPluginDataLength+len(handshake.AuthPluginName) + 1
+    read = p+23+authPluginDataLength+nslen
     return
 }
 
@@ -186,6 +191,7 @@ func (self *AuthPacket) ToBuffer(buffer []byte) (writen int, err error) {
         copy(buffer[p:], []byte(self.AuthPluginName))
         p+= len(self.AuthPluginName)
         buffer[p] = '\x00'
+        p+= 1
     }
     writen = p
     return

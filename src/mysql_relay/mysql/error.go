@@ -25,5 +25,7 @@ PACKET_SEQ_NOT_CORRECT = Error{10, "packet seq not correct"}
 NOT_SUCH_EVENT  = Error{11, "not such event"}
 PROTOCOL_NOT_SUPPORTED  = Error{12, "protocol not supported"}
 SERVER_CAPABILITY_NOT_SUFFICIENT = Error{13, "server capability not sufficient"}
+LENENCINT_IS_NULL = Error{14, "is null"}
+NOT_VALID_LENENCINT = Error{15, "not valid lenencint"}
 )
 
