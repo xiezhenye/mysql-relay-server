@@ -64,7 +64,7 @@ func (self *HandShakePacket) FromBuffer(buffer []byte) error {
     }
 }
 
-func (self *HandShakePacket) ToBuffer(buffer []byte) (ret []byte, err error) {
+func (self *HandShakePacket) ToBuffer(buffer []byte) (writen int, err error) {
     // only support V10
     return
 }
@@ -157,7 +157,7 @@ string[NUL]    scramble
     return
 }
 
-func (self *AuthPacket) ToBuffer(buffer []byte) (ret []byte, err error) {
+func (self *AuthPacket) ToBuffer(buffer []byte) (writen int, err error) {
     var p int
     if (self.CapabilityFlags & RELAY_CLIENT_CAP) == 0 {
         err = SERVER_CAPABILITY_NOT_SUFFICIENT
@@ -186,7 +186,7 @@ func (self *AuthPacket) ToBuffer(buffer []byte) (ret []byte, err error) {
         p+= len(self.AuthPluginName)
         buffer[p] = '\x00'
     }
-    ret = buffer[0:p]
+    writen = p
     return
 }
 

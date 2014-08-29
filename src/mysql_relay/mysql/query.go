@@ -17,10 +17,10 @@ func (self *QueryCommand) CommandType() byte {
     return COM_QUERY
 }
 
-func (self *QueryCommand) ToBuffer(buffer []byte) (ret []byte, err error) {
+func (self *QueryCommand) ToBuffer(buffer []byte) (writen int, err error) {
     buffer[0] = COM_QUERY
     n := copy(buffer[1:], []byte(self.Query))
-    ret = buffer[0:n + 1]
+    writen = n + 1
     return
 }
 

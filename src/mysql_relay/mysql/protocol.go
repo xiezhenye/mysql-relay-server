@@ -86,7 +86,7 @@ type OutputPacket interface {
 }
 
 type Outputable interface {
-    ToBuffer(buffer []byte) (ret []byte, err error)
+    ToBuffer(buffer []byte) (int, error)
 }
 
 type InputPacket interface {
@@ -113,17 +113,17 @@ func ReadPacketFrom(packet InputPacket, reader io.Reader, buffer []byte) (err er
 }
 
 func WritePacketTo(packet OutputPacket, writer io.Writer, buffer []byte) (err error) {
-    bufRet, err := packet.ToBuffer(buffer)
+    writen, err := packet.ToBuffer(buffer)
     if err != nil {
         return err
     }
-    packet.GetHeader().PacketLength = uint32(len(bufRet))
+    packet.GetHeader().PacketLength = uint32(writen)
     uint32Header := packet.GetHeader().ToUint32()
     err = binary.Write(writer, ENDIAN, uint32Header)
     if err != nil {
         return
     }
-    _, err = writer.Write(bufRet)
+    _, err = writer.Write(buffer[:writen])
     return
 }
 

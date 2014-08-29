@@ -46,13 +46,13 @@ string[$len]   slaves password
     ServerId  uint32
 }
 
-func (self *ComRegisterSlave) ToBuffer(buffer []byte) (ret []byte, err error) {
+func (self *ComRegisterSlave) ToBuffer(buffer []byte) (writen int, err error) {
     buffer[0] = COM_REGISTER_SLAVE
     binary.LittleEndian.PutUint32(buffer[1:], self.ServerId)
     for i := range buffer[5:17] {
         buffer[i] = 0
     }
-    return buffer[0:17], nil
+    return 17, nil
 }
 
 func (self *ComRegisterSlave) CommandType() byte {
@@ -74,13 +74,13 @@ string[EOF]    binlog-filename
     BinlogFilename  string
 }
 
-func (self *ComBinglogDump) ToBuffer(buffer []byte) (ret []byte, err error) {
+func (self *ComBinglogDump) ToBuffer(buffer []byte) (writen int, err error) {
     buffer[0] = COM_BINLOG_DUMP
     binary.LittleEndian.PutUint32(buffer[1:], self.BinlogPos)
     binary.LittleEndian.PutUint16(buffer[5:], self.Flags)
     binary.LittleEndian.PutUint32(buffer[7:], self.ServerId)
     copy(buffer[11:], []byte(self.BinlogFilename))
-    ret = buffer[0:11+len(self.BinlogFilename)]
+    writen = 11+len(self.BinlogFilename)
     return
 }
 
