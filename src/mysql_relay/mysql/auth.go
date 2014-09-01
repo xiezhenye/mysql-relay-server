@@ -6,7 +6,6 @@ import (
     //"fmt"
 )
 type HandShakePacket struct {
-    
     PacketHeader
     ProtoVer        byte
     ServerVer       string
@@ -109,7 +108,6 @@ func ReadHandShake(reader io.Reader, buffer []byte) (handshake HandShakePacket, 
     }
     return
 }
-
 
 func handShakeV10(buffer []byte, handshake *HandShakePacket) (read int, err error) {
 /*
@@ -220,8 +218,6 @@ string[NUL]    auth plugin name
     AuthPluginName      string
 }
 
-
-
 func (self *AuthPacket) ToBuffer(buffer []byte) (writen int, err error) {
     var p int
     if (self.CapabilityFlags & RELAY_CLIENT_CAP) == 0 {
@@ -230,7 +226,10 @@ func (self *AuthPacket) ToBuffer(buffer []byte) (writen int, err error) {
     }
     ENDIAN.PutUint32(buffer[0:], self.CapabilityFlags)
     ENDIAN.PutUint32(buffer[4:], self.MaxPacketSize)
-    buffer[5] = self.CharacterSet
+    buffer[8] = self.CharacterSet
+    for p = 9; p < 32; p++ {
+        buffer[p] = '\x00'
+    }
     copy(buffer[32:], []byte(self.Username))
     p = 32 + len(self.Username)
     buffer[p] = '\x00'
@@ -253,6 +252,11 @@ func (self *AuthPacket) ToBuffer(buffer []byte) (writen int, err error) {
         p+= 1
     }
     writen = p
+    return
+}
+
+func (self *AuthPacket) FromBuffer(buffer []byte) (read int, err error) {
+    
     return
 }
 
@@ -283,8 +287,7 @@ func authResponse(authString string, password string) string {
     return string(t3[:])
 }
 
-
-func Auth(authPacket AuthPacket, readWriter io.ReadWriter, buffer []byte) (ret OkPacket, err error) {
+func SendAuth(authPacket AuthPacket, readWriter io.ReadWriter, buffer []byte) (ret OkPacket, err error) {
     err = WritePacketTo(&authPacket, readWriter, buffer)
     packet, err := ReadGenericResponsePacket(readWriter, buffer)
     if err != nil {

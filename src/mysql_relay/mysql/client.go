@@ -2,7 +2,7 @@ package mysql
 
 import (
     "net"
-    //"fmt"
+//    "fmt"
 )
 
 const (
@@ -12,7 +12,6 @@ const (
 const (
     RELAY_CLIENT_CAP = CLIENT_PROTOCOL_41 | CLIENT_PLUGIN_AUTH | CLIENT_SECURE_CONNECTION
 )
-
 
 type Client struct {
     ServerAddr string
@@ -29,36 +28,24 @@ func (self *Client) Connect() (err error){
     if err != nil {
         return
     }
-    handshake, err := self.handshake()
+    handshake, err := ReadHandShake(self.Conn, self.Buffer[:])
     if err != nil {
         return
-    }
-    _, err = self.auth(handshake)
-    if err != nil {
-        return
-    }
-    return
-}
-
-func (self *Client) handshake() (handshake HandShakePacket, err error) {
-    handshake, err = ReadHandShake(self.Conn, self.Buffer[:])
-    if err == nil {
+    } else {
         self.Seq = 0
     }
-    return
-}
-
-func (self *Client) auth(handshake HandShakePacket) (ret OkPacket, err error) {
     authPacket, err := buildAuthPacket(self.Username, self.Password, handshake)
     if err != nil {
         return
     }
-    ret, err = Auth(authPacket, self.Conn, self.Buffer[:])
+    
+    ret, err := SendAuth(authPacket, self.Conn, self.Buffer[:])
     if err == nil {
         self.Seq = ret.PacketSeq
     }
     return
 }
+
 
 func (self *Client) Command(command Command) (ret OkPacket, err error) {
     ret, err = ExecCommand(command, self.Conn, self.Buffer[:])

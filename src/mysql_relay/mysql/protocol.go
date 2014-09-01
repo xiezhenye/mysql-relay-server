@@ -29,6 +29,9 @@ const (
     CLIENT_PLUGIN_AUTH                    = 0x00080000
     CLIENT_CONNECT_ATTRS                  = 0x00100000
     CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 0x00200000
+    CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS   = 0x00400000
+    CLIENT_SSL_VERIFY_SERVER_CERT         = 0x40000000
+    CLIENT_REMEMBER_OPTIONS               = 0x80000000
 )
 var (
     ENDIAN = binary.LittleEndian
@@ -39,18 +42,19 @@ const (
     GRP_EOF byte = '\xfe'
 )
 const (
-    SERVER_STATUS_IN_TRANS uint16 = 0x0001	
-    SERVER_STATUS_AUTOCOMMIT = 0x0002	
-    SERVER_MORE_RESULTS_EXISTS = 0x0008
-    SERVER_STATUS_NO_GOOD_INDEX_USED = 0x0010
-    SERVER_STATUS_NO_INDEX_USED = 0x0020
-    SERVER_STATUS_CURSOR_EXISTS = 0x0040
-    SERVER_STATUS_LAST_ROW_SENT = 0x0080
-    SERVER_STATUS_DB_DROPPED = 0x0100
+    SERVER_STATUS_IN_TRANS uint16      = 0x0001	
+    SERVER_STATUS_AUTOCOMMIT           = 0x0002	
+    SERVER_MORE_RESULTS_EXISTS         = 0x0008
+    SERVER_STATUS_NO_GOOD_INDEX_USED   = 0x0010
+    SERVER_STATUS_NO_INDEX_USED        = 0x0020
+    SERVER_STATUS_CURSOR_EXISTS        = 0x0040
+    SERVER_STATUS_LAST_ROW_SENT        = 0x0080
+    SERVER_STATUS_DB_DROPPED           = 0x0100
     SERVER_STATUS_NO_BACKSLASH_ESCAPES = 0x0200
-    SERVER_STATUS_METADATA_CHANGED = 0x0400
-    SERVER_QUERY_WAS_SLOW = 0x0800
-    SERVER_PS_OUT_PARAMS = 0x1000
+    SERVER_STATUS_METADATA_CHANGED     = 0x0400
+    SERVER_QUERY_WAS_SLOW              = 0x0800
+    SERVER_PS_OUT_PARAMS               = 0x1000
+    SERVER_STATUS_IN_TRANS_READONLY    = 0x2000
 )
 type PacketHeader struct {
     PacketSeq    byte
@@ -85,6 +89,8 @@ type OutputPacket interface {
     Packet
 }
 
+// packet header has bean already sent. ToBuffer should write the packet body from buffer
+// buffer should begin after packet header
 type Outputable interface {
     ToBuffer(buffer []byte) (int, error)
 }
@@ -94,6 +100,8 @@ type InputPacket interface {
     Packet
 }
 
+// packet header has bean already read. FromBuffer should read the packet body from buffer
+// buffer should begin after packet header
 type Inputable interface {
     FromBuffer(buffer []byte) (int, error)
 }
@@ -162,6 +170,7 @@ func ReadPacketHeader(reader io.Reader) (header PacketHeader, err error) {
 }
 
 type NullString string
+
 func (self *NullString) FromBuffer(buffer []byte) (int, error) {
     var i int
     var b byte
@@ -173,6 +182,7 @@ func (self *NullString) FromBuffer(buffer []byte) (int, error) {
     }
     return 0, BUFFER_NOT_SUFFICIENT
 }
+
 func (self *NullString) ToBuffer(buffer []byte) (int, error) {
     copy(buffer, []byte(*self))
     buffer[len(*self)] = '\x00'
@@ -180,6 +190,7 @@ func (self *NullString) ToBuffer(buffer []byte) (int, error) {
 }
 
 type LenencInt uint64
+
 func (self *LenencInt) FromBuffer(buffer []byte) (read int, err error) {
 /*
 http://dev.mysql.com/doc/internals/en/integer.html#length-encoded-integer
@@ -262,42 +273,7 @@ func (self *LenencString) ToBuffer(buffer []byte) (writen int, err error) {
     writen+= len(*self)
     return
 }
-/*
-func readLenencInt(reader io.Reader) (ret uint64, n int, err error) {
-    var buf [8]byte
-    _, err = reader.Read(buf[0:1])
-    if err != nil {
-        return
-    }
-    if buf[0] < '\xfb' {
-        ret, n = uint64(buf[0]), 1
-        return
-    }
-    if buf[0] == '\xfc' {
-        _, err = reader.Read(buf[0:2])
-        if err != nil {
-            return
-        }
-        ret, n = uint64(ENDIAN.Uint16(buf[:])), 3
-    }
-    if buf[0] == '\xfd' {
-        _, err = reader.Read(buf[1:4])
-        if err != nil {
-            return
-        }
-        ret, n = uint64(ENDIAN.Uint32(buf[:]) & 0x00ffffff), 4
-    }
-    if buf[0] == '\xfe' {
-        _, err = reader.Read(buf[0:8])
-        if err != nil {
-            return
-        }
-        ret, n = uint64(ENDIAN.Uint64(buf[:])), 9
-    }
-    ret, n = 0, 0
-    return
-}
-*/
+
 type GenericResponsePacket struct {
     PacketHeader
     PacketType  byte
