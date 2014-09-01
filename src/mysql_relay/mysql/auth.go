@@ -184,28 +184,26 @@ string[NUL]    scramble
 
 type AuthPacket struct {
      PacketHeader
+     
 /*
 http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse
+cap must has  CLIENT_PROTOCOL_41 |
+              CLIENT_PLUGIN_AUTH |
+              CLIENT_SECURE_CONNECTION |
+              CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
+
+
 4              capability flags, CLIENT_PROTOCOL_41 always set
 4              max-packet size
 1              character set
 string[23]     reserved (all [0])
 string[NUL]    username
-  if capabilities & CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA {
 lenenc-int     length of auth-response
 string[n]      auth-response
-  } else if capabilities & CLIENT_SECURE_CONNECTION {
-1              length of auth-response
-string[n]      auth-response
-  } else {
-string[NUL]    auth-response
-  }
   if capabilities & CLIENT_CONNECT_WITH_DB {
 string[NUL]    database
   }
-  if capabilities & CLIENT_PLUGIN_AUTH {
 string[NUL]    auth plugin name
-  }
 */  
     //CLIENT_SECURE_CONNECTION only
     CapabilityFlags     uint32
@@ -256,7 +254,48 @@ func (self *AuthPacket) ToBuffer(buffer []byte) (writen int, err error) {
 }
 
 func (self *AuthPacket) FromBuffer(buffer []byte) (read int, err error) {
-    
+    if (self.CapabilityFlags & RELAY_CLIENT_CAP) == 0 {
+        err = SERVER_CAPABILITY_NOT_SUFFICIENT
+        return
+    }
+    p := 0
+    self.CapabilityFlags = ENDIAN.Uint32(buffer[p:])
+    p+= 4
+    self.MaxPacketSize = ENDIAN.Uint32(buffer[p:])
+    p+= 4
+    self.CharacterSet = buffer[p]
+    p+= 1
+    p+= 23
+    var ns    NullString
+    var les   LenencString
+    var n int
+    n, err = ns.FromBuffer(buffer[p:])
+    if err != nil {
+        return
+    }
+    self.Username = string(ns)
+    p+= n
+    n, err = les.FromBuffer(buffer[p:])
+    if err != nil {
+        return
+    }
+    self.AuthResponse = string(les)
+    p+= n
+    if self.CapabilityFlags & CLIENT_CONNECT_WITH_DB != 0 {
+        n, err = ns.FromBuffer(buffer[p:])
+        if err != nil {
+            return
+        }
+        self.Database = string(ns)
+        p+= n
+    }
+    n, err = ns.FromBuffer(buffer[p:])
+    if err != nil {
+        return
+    }
+    self.AuthPluginName = string(ns)
+    p+= n
+    read = p
     return
 }
 
