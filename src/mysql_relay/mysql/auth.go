@@ -3,7 +3,7 @@ package mysql
 import (
     "io"
     "crypto/sha1"
-    //"fmt"
+    "fmt"
 )
 type HandShakePacket struct {
     PacketHeader
@@ -17,7 +17,14 @@ type HandShakePacket struct {
     AuthPluginName  string
 }
 
-const DEFAULT_AUTH_PLUGIN_NAME = "mysql_native_password"
+func BuildHandShakePacket(ConnId uint32) (ret HandShakePacket) {
+    ret.ProtoVer = byte(10)
+    ret.ServerVer = ""
+    ret.ConnId = ConnId
+    ret.CharacterSet = UTF8_GENERAL_CI
+    
+    return
+}
 
 func (self *HandShakePacket) FromBuffer(buffer []byte) (int, error) {
     self.ProtoVer = uint8(buffer[0])
@@ -106,6 +113,7 @@ func ReadHandShake(reader io.Reader, buffer []byte) (handshake HandShakePacket, 
         err = BAD_HANDSHAKE_PACKET
         return
     }
+    fmt.Println(handshake)
     return
 }
 
@@ -143,7 +151,7 @@ string[NUL]    auth-plugin name
         return 0, BAD_HANDSHAKE_PACKET
     }
     p += nslen
-    handshake.ConnId = ENDIAN.Uint32(buffer)
+    handshake.ConnId = ENDIAN.Uint32(buffer[p:])
     if buffer[p+12] != '\x00' {
         return 0, BAD_HANDSHAKE_PACKET
     }
@@ -184,7 +192,6 @@ string[NUL]    scramble
 
 type AuthPacket struct {
      PacketHeader
-     
 /*
 http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::HandshakeResponse
 cap must has  CLIENT_PROTOCOL_41 |

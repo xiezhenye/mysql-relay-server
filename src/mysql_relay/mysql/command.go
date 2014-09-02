@@ -6,20 +6,9 @@ import (
     //"fmt"
 )
 
-const (
-  COM_SLEEP byte = iota; COM_QUIT
-  COM_INIT_DB; COM_QUERY; COM_FIELD_LIST
-  COM_CREATE_DB; COM_DROP_DB; COM_REFRESH; COM_SHUTDOWN; COM_STATISTICS
-  COM_PROCESS_INFO; COM_CONNECT; COM_PROCESS_KILL; COM_DEBUG; COM_PING
-  COM_TIME; COM_DELAYED_INSERT; COM_CHANGE_USER; COM_BINLOG_DUMP
-  COM_TABLE_DUMP; COM_CONNECT_OUT; COM_REGISTER_SLAVE
-  COM_STMT_PREPARE; COM_STMT_EXECUTE; COM_STMT_SEND_LONG_DATA; COM_STMT_CLOSE
-  COM_STMT_RESET; COM_SET_OPTION; COM_STMT_FETCH
-  COM_DAEMON; COM_BINLOG_DUMP_GTID
-)
 
 type Command interface {
-    CommandType() byte
+    CommandType() CommandType
     Outputable
 }
 
@@ -47,7 +36,7 @@ string[$len]   slaves password
 }
 
 func (self *ComRegisterSlave) ToBuffer(buffer []byte) (writen int, err error) {
-    buffer[0] = COM_REGISTER_SLAVE
+    buffer[0] = byte(COM_REGISTER_SLAVE)
     binary.LittleEndian.PutUint32(buffer[1:], self.ServerId)
     for i := range buffer[5:17] {
         buffer[i] = 0
@@ -55,7 +44,7 @@ func (self *ComRegisterSlave) ToBuffer(buffer []byte) (writen int, err error) {
     return 17, nil
 }
 
-func (self *ComRegisterSlave) CommandType() byte {
+func (self *ComRegisterSlave) CommandType() CommandType {
     return COM_REGISTER_SLAVE
 }
 
@@ -75,7 +64,7 @@ string[EOF]    binlog-filename
 }
 
 func (self *ComBinglogDump) ToBuffer(buffer []byte) (writen int, err error) {
-    buffer[0] = COM_BINLOG_DUMP
+    buffer[0] = byte(COM_BINLOG_DUMP)
     binary.LittleEndian.PutUint32(buffer[1:], self.BinlogPos)
     binary.LittleEndian.PutUint16(buffer[5:], self.Flags)
     binary.LittleEndian.PutUint32(buffer[7:], self.ServerId)
@@ -84,7 +73,7 @@ func (self *ComBinglogDump) ToBuffer(buffer []byte) (writen int, err error) {
     return
 }
 
-func (self *ComBinglogDump) CommandType() byte {
+func (self *ComBinglogDump) CommandType() CommandType {
     return COM_BINLOG_DUMP
 }
 

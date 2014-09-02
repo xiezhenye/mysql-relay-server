@@ -14,12 +14,12 @@ type QueryCommand struct {
     Query string
 }
 
-func (self *QueryCommand) CommandType() byte {
+func (self *QueryCommand) CommandType() CommandType {
     return COM_QUERY
 }
 
 func (self *QueryCommand) ToBuffer(buffer []byte) (writen int, err error) {
-    buffer[0] = COM_QUERY
+    buffer[0] = byte(COM_QUERY)
     n := copy(buffer[1:], []byte(self.Query))
     writen = n + 1
     return

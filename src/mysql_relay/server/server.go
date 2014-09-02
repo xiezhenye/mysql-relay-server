@@ -24,6 +24,11 @@ func (self *Peer) Close() {
     self.Conn.Close()
 }
 
+func (self *Peer) Auth() (err error) {
+    
+    return
+}
+
 func (self *Server) Run() (err error) {
     var listen net.Listener
     var conn   net.Conn
@@ -53,15 +58,16 @@ func (self *Server) Run() (err error) {
         }
         connId := self.GetNextConnId()
         self.Peers[connId] = Peer{ConnId:self.GetNextConnId(), Conn:conn}
-        go self.Handle(&self.Peers[connId])
+        go self.handle(&self.Peers[connId])
     }
 }
 
-func (self *Server) Handle(peer *Peer) {
+func (self *Server) handle(peer *Peer) {
     defer func() {
         peer.Close()
         self.Closed<-peer.ConnId
     }
+    
 }
 
 func isTemporaryNetError(err error) bool {
