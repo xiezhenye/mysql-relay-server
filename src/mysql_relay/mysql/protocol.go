@@ -141,7 +141,19 @@ func (self *NullString) ToBuffer(buffer []byte) (int, error) {
 }
 
 type LenencInt uint64
-
+func (self *LenencInt) Size() int {
+    n := uint64(*self)
+    if n < 251 {
+        return 1
+    }
+    if n <= 0xffff {
+        return 3
+    }
+    if n <= 0xffffff {
+        return 4
+    }
+    return 9
+}
 func (self *LenencInt) FromBuffer(buffer []byte) (read int, err error) {
 /*
 http://dev.mysql.com/doc/internals/en/integer.html#length-encoded-integer
@@ -322,6 +334,24 @@ func (self *OkPacket) FromBuffer(buffer []byte) (read int, err error) {
     return   
 }
 
+func (self *OkPacket) ToBuffer(buffer []byte) (writen int, err error) {
+    buffer[0] = GRP_OK
+    p := 1
+    n := 0
+    leInt := LenencInt(self.AffectedRows)
+    n, _ = leInt.ToBuffer(buffer[p:])
+    p+= n
+    leInt = LenencInt(self.LastInsertId)
+    n, _ = leInt.ToBuffer(buffer[p:])
+    p+= n
+    ENDIAN.PutUint16(buffer[p:], self.StatusFlags)
+    p+= 2
+    ENDIAN.PutUint16(buffer[p:], self.Warnings)
+    p+= 2
+    writen = p
+    return
+}
+
 type PayloadReader struct {
     reader  io.Reader
     header  *PayloadPacket
@@ -407,6 +437,9 @@ func (self ErrPacket) ToError() (err error) {
     return
 }
 
+func (self ErrPacket) Error() string {
+    return self.ToError().Error()
+}
 type EofPacket struct {
     PacketHeader
 //http://dev.mysql.com/doc/internals/en/packet-EOF_Packet.html

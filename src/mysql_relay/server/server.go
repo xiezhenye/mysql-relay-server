@@ -8,6 +8,7 @@ import (
     "mysql_relay/util"
     "mysql_relay/mysql"
     "fmt"
+    "time"
 )
 
 type Server struct {
@@ -46,6 +47,13 @@ func (self *Peer) Auth() (err error) {
     hash2 := mysql.Hash2("12345678")
     authed := mysql.CheckAuth(handshake.AuthString, hash2[:], []byte(auth.AuthResponse))
     fmt.Println(authed)
+    if authed {
+        ok := mysql.OkPacket{}
+        ok.PacketSeq = auth.PacketSeq + 1
+        err = mysql.WritePacketTo(&ok, self.Conn, self.Buffer[:])
+    } else {
+        
+    }
     return
 }
 
@@ -88,7 +96,11 @@ func (self *Server) handle(peer Peer) {
         peer.Close()
         self.Closed<-peer.ConnId
     }()
-    peer.Auth()
+    err := peer.Auth()
+    if err != nil {
+        return
+    }
+    time.Sleep(60 * time.Second)
 }
 
 func isTemporaryNetError(err error) bool {
