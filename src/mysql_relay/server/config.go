@@ -19,6 +19,7 @@ type UpstreamConfig struct {
 
 type UserConfig struct {
     Name         string
+    Host         string
     Password     string
     Upstream     string
 }

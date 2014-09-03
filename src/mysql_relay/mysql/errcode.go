@@ -888,7 +888,7 @@ ER_AES_INVALID_IV = 1882
 ER_ERROR_LAST = 1882
 )
 
-var MSG_MAP = map[uint16]string {
+var SERVER_ERR_MESSAGES = map[uint16]string {
 ER_HASHCHK: "hashchk",
 ER_NISAMCHK: "isamchk",
 ER_NO: "NO",

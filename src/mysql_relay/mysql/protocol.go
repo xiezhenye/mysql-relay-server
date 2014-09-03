@@ -432,6 +432,25 @@ func (self *ErrPacket) FromBuffer(buffer []byte) (read int, err error) {
     return
 }
 
+func (self *ErrPacket) ToBuffer(buffer[]byte) (writen int, err error) {
+    buffer[0] = GRP_ERR
+    p := 1
+    ENDIAN.PutUint16(buffer[1:], self.ErrorCode)
+    p+= 2
+    if self.SqlState != "" {
+        if len(self.SqlState) != 5 {
+            //
+        }
+        buffer[p] = '#'
+        copy(buffer[p+1:], []byte(self.SqlState))
+        p+= len(self.SqlState)
+    }
+    copy(buffer[p:], []byte(self.ErrorMessage))
+    p+= len(self.ErrorMessage)
+    writen = p
+    return
+}
+
 func (self ErrPacket) ToError() (err error) {
     err = Error{int(self.ErrorCode)+100000, "("+self.SqlState+") "+self.ErrorMessage}
     return

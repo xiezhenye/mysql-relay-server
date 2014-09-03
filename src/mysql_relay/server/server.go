@@ -32,6 +32,20 @@ func (self *Peer) Close() {
 }
 
 func (self *Peer) Auth() (err error) {
+    /*
+    peerHost = ...
+    if peerHost not valid {
+        errcode := ER_HOST_NOT_PRIVILEGED
+        errPacket := mysql.ErrPacket {
+            ErrorCode: ER_HOST_NOT_PRIVILEGED,
+            SqlState : "",
+            ErrorMessage: fmt.Sprintf(SERVER_ERR_MESSAGES[ER_HOST_NOT_PRIVILEGED], peerHost)
+        }
+        err = mysql.WritePacketTo(&errPacket, self.Conn, self.Buffer[:])
+        return
+    }
+    */
+    
     handshake := mysql.BuildHandShakePacket(self.Server.Version, self.ConnId)
     err = mysql.WritePacketTo(&handshake, self.Conn, self.Buffer[:])
     fmt.Println(handshake)
