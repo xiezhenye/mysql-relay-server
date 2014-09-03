@@ -1,13 +1,13 @@
 package server
 
 type Config struct {
-    Upstreams map[string] Upstream
-    Users     map[string] User
-    Server    Server
+    Upstreams map[string] UpstreamConfig
+    Users     map[string] UserConfig
+    Server    ServerConfig
     
 }
 
-type Upstream struct {
+type UpstreamConfig struct {
     Name       string
     LocalDir   string
     StartFile  string
@@ -17,13 +17,13 @@ type Upstream struct {
     ServerId   uint32
 }
 
-type User struct {
+type UserConfig struct {
     Name         string
     Password     string
     Upstream     string
 }
 
-type Server struct {
+type ServerConfig struct {
     Addr      string
     ServerId  uint32
     Uuid      string

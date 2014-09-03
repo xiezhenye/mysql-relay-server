@@ -2,9 +2,8 @@ package mysql
 import (
     "encoding/binary"
 )
-type Capability uint32
 const (
-    CLIENT_LONG_PASSWORD    Capability    = 0x00000001
+    CLIENT_LONG_PASSWORD    uint32        = 0x00000001
     CLIENT_FOUND_ROWS                     = 0x00000002
     CLIENT_LONG_FLAG                      = 0x00000004
     CLIENT_CONNECT_WITH_DB                = 0x00000008
@@ -30,6 +29,13 @@ const (
     CLIENT_SSL_VERIFY_SERVER_CERT         = 0x40000000
     CLIENT_REMEMBER_OPTIONS               = 0x80000000
 )
+
+
+const (
+    RELAY_CLIENT_CAP uint32 = CLIENT_PROTOCOL_41 | CLIENT_PLUGIN_AUTH | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
+    DEFAULT_SERVER_CAP = 0x807ff7ff
+)
+
 var (
     ENDIAN = binary.LittleEndian
 )
@@ -38,9 +44,8 @@ const (
     GRP_ERR byte = '\xff'
     GRP_EOF byte = '\xfe'
 )
-type ServerStatus uint16
 const (
-    SERVER_STATUS_IN_TRANS ServerStatus      = 0x0001	
+    SERVER_STATUS_IN_TRANS uint16      = 0x0001	
     SERVER_STATUS_AUTOCOMMIT           = 0x0002	
     SERVER_MORE_RESULTS_EXISTS         = 0x0008
     SERVER_STATUS_NO_GOOD_INDEX_USED   = 0x0010
@@ -57,9 +62,8 @@ const (
 
 const DEFAULT_AUTH_PLUGIN_NAME = "mysql_native_password"
 
-type CommandType byte
 const (
-    COM_SLEEP CommandType = iota; COM_QUIT
+    COM_SLEEP byte = iota; COM_QUIT
     COM_INIT_DB; COM_QUERY; COM_FIELD_LIST
     COM_CREATE_DB; COM_DROP_DB; COM_REFRESH; COM_SHUTDOWN; COM_STATISTICS
     COM_PROCESS_INFO; COM_CONNECT; COM_PROCESS_KILL; COM_DEBUG; COM_PING
@@ -69,9 +73,8 @@ const (
     COM_STMT_RESET; COM_SET_OPTION; COM_STMT_FETCH
     COM_DAEMON; COM_BINLOG_DUMP_GTID
 )
-type CharacterSet byte
 const (
-    BIG5_CHINESE_CI	CharacterSet = 1
+    BIG5_CHINESE_CI	byte = 1
     LATIN2_CZECH_CS	=	2
     DEC8_SWEDISH_CI	=	3
     CP850_GENERAL_CI	=	4

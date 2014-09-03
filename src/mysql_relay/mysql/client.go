@@ -6,11 +6,7 @@ import (
 )
 
 const (
-    BUFFER_SIZE = 1024
-)
-
-const (
-    RELAY_CLIENT_CAP = CLIENT_PROTOCOL_41 | CLIENT_PLUGIN_AUTH | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
+    CLIENT_BUFFER_SIZE = 1024
 )
 
 type Client struct {
@@ -20,7 +16,7 @@ type Client struct {
     ServerId   uint32
     Seq        byte
     Conn       net.Conn
-    Buffer     [BUFFER_SIZE]byte
+    Buffer     [CLIENT_BUFFER_SIZE]byte
 }
 
 func (self *Client) Connect() (err error){

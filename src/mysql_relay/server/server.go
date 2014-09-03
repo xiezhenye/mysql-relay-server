@@ -6,18 +6,24 @@ import (
     "regexp"
     "strings"
     "mysql_relay/util"
+    "mysql_relay/mysql"
+    "fmt"
 )
 
 type Server struct {
     Addr        string
     Peers       map[uint32]Peer
+    Version     string
     NextConnId  uint32
-    Closed  chan uint32
+    Closed      chan uint32
 }
 
+const PEER_BUFFER_SIZE = 1024
 type Peer struct {
     ConnId  uint32
+    Server  *Server
     Conn    net.Conn
+    Buffer  [PEER_BUFFER_SIZE]byte
 }
 
 func (self *Peer) Close() {
@@ -25,7 +31,21 @@ func (self *Peer) Close() {
 }
 
 func (self *Peer) Auth() (err error) {
-    
+    handshake := mysql.BuildHandShakePacket(self.Server.Version, self.ConnId)
+    err = mysql.WritePacketTo(&handshake, self.Conn, self.Buffer[:])
+    fmt.Println(handshake)
+    if err != nil {
+        return
+    }
+    var auth mysql.AuthPacket
+    err = mysql.ReadPacketFrom(&auth, self.Conn, self.Buffer[:])
+    if err != nil {
+        return
+    }
+    fmt.Println(auth)
+    hash2 := mysql.Hash2("12345678")
+    authed := mysql.CheckAuth(handshake.AuthString, hash2[:], []byte(auth.AuthResponse))
+    fmt.Println(authed)
     return
 }
 
@@ -39,11 +59,12 @@ func (self *Server) Run() (err error) {
     defer listen.Close()
     var delayer util.AutoDelayer
     self.Closed = make(chan uint32)
+    self.Peers = make(map[uint32]Peer)
     go func() {
         for closed := range self.Closed {
-            delete(self.Peers[closed])
+            delete(self.Peers, closed)
         }
-    }
+    }()
     for {
         conn, err = listen.Accept()
         if err != nil {
@@ -57,17 +78,17 @@ func (self *Server) Run() (err error) {
             delayer.Reset()
         }
         connId := self.GetNextConnId()
-        self.Peers[connId] = Peer{ConnId:self.GetNextConnId(), Conn:conn}
-        go self.handle(&self.Peers[connId])
+        self.Peers[connId] = Peer{ConnId:connId, Conn:conn, Server:self}
+        go self.handle(self.Peers[connId])
     }
 }
 
-func (self *Server) handle(peer *Peer) {
+func (self *Server) handle(peer Peer) {
     defer func() {
         peer.Close()
         self.Closed<-peer.ConnId
-    }
-    
+    }()
+    peer.Auth()
 }
 
 func isTemporaryNetError(err error) bool {

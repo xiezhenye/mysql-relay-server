@@ -8,7 +8,7 @@ import (
 
 
 type Command interface {
-    CommandType() CommandType
+    CommandType() byte
     Outputable
 }
 
@@ -44,7 +44,7 @@ func (self *ComRegisterSlave) ToBuffer(buffer []byte) (writen int, err error) {
     return 17, nil
 }
 
-func (self *ComRegisterSlave) CommandType() CommandType {
+func (self *ComRegisterSlave) CommandType() byte {
     return COM_REGISTER_SLAVE
 }
 
@@ -73,7 +73,7 @@ func (self *ComBinglogDump) ToBuffer(buffer []byte) (writen int, err error) {
     return
 }
 
-func (self *ComBinglogDump) CommandType() CommandType {
+func (self *ComBinglogDump) CommandType() byte {
     return COM_BINLOG_DUMP
 }
 

@@ -71,17 +71,18 @@ func ReadPacketFrom(packet InputPacket, reader io.Reader, buffer []byte) (err er
 }
 
 func WritePacketTo(packet OutputPacket, writer io.Writer, buffer []byte) (err error) {
-    writen, err := packet.ToBuffer(buffer)
+    writen, err := packet.ToBuffer(buffer[4:])
     if err != nil {
         return err
     }
     packet.GetHeader().PacketLength = uint32(writen)
     uint32Header := packet.GetHeader().ToUint32()
-    err = binary.Write(writer, ENDIAN, uint32Header)
+    ENDIAN.PutUint32(buffer, uint32Header)
+    //err = binary.Write(writer, ENDIAN, uint32Header)
     if err != nil {
         return
     }
-    _, err = writer.Write(buffer[:writen])
+    _, err = writer.Write(buffer[:writen+4])
     return
 }
 
