@@ -27,5 +27,6 @@ var (
     SERVER_CAPABILITY_NOT_SUFFICIENT  = Error{13, "server capability not sufficient"}
     LENENCINT_IS_NULL                 = Error{14, "is null"}
     NOT_VALID_LENENCINT               = Error{15, "not valid lenencint"}
+    SEEK_AFTER_READ                   = Error{16, "seek after read"}
 )
 

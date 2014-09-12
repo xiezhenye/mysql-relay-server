@@ -8,7 +8,9 @@ import (
     "mysql_relay/util"
     "mysql_relay/mysql"
     "fmt"
-    "time"
+//    "time"
+    "io"
+    "io/ioutil"
 )
 
 type Server struct {
@@ -31,10 +33,18 @@ func (self *Peer) Close() {
     self.Conn.Close()
 }
 
+func (self *Peer) RemoteAddr() *net.TCPAddr {
+    return self.Conn.RemoteAddr().(*net.TCPAddr)
+}
+
+func (self *Peer) RemoteIP() string {
+    return self.RemoteAddr().IP.String()
+}
+
 func (self *Peer) Auth() (err error) {
     /*
     peerHost = ...
-    if peerHost not valid {
+    if self.RemoteIP() not valid {
         errcode := ER_HOST_NOT_PRIVILEGED
         errPacket := mysql.ErrPacket {
             ErrorCode: ER_HOST_NOT_PRIVILEGED,
@@ -45,7 +55,8 @@ func (self *Peer) Auth() (err error) {
         return
     }
     */
-    
+
+    fmt.Println(self.RemoteIP())
     handshake := mysql.BuildHandShakePacket(self.Server.Version, self.ConnId)
     err = mysql.WritePacketTo(&handshake, self.Conn, self.Buffer[:])
     fmt.Println(handshake)
@@ -62,11 +73,16 @@ func (self *Peer) Auth() (err error) {
     authed := mysql.CheckAuth(handshake.AuthString, hash2[:], []byte(auth.AuthResponse))
     fmt.Println(authed)
     if authed {
-        ok := mysql.OkPacket{}
-        ok.PacketSeq = auth.PacketSeq + 1
-        err = mysql.WritePacketTo(&ok, self.Conn, self.Buffer[:])
+        okPacket := mysql.OkPacket{}
+        okPacket.PacketSeq = auth.PacketSeq + 1
+        err = mysql.WritePacketTo(&okPacket, self.Conn, self.Buffer[:])
     } else {
-        
+        errPacket := mysql.BuildErrPacket(mysql.ER_ACCESS_DENIED_ERROR, auth.Username, self.RemoteIP(), "yes");
+        errPacket.PacketSeq = auth.PacketSeq + 1
+        err = mysql.WritePacketTo(&errPacket, self.Conn, self.Buffer[:])
+        if err == nil {
+            err = errPacket.ToError()
+        }
     }
     return
 }
@@ -114,7 +130,64 @@ func (self *Server) handle(peer Peer) {
     if err != nil {
         return
     }
-    time.Sleep(60 * time.Second)
+    cmdPacket := mysql.BaseCommandPacket{}
+    for {
+        err = mysql.ReadPacketFrom(&cmdPacket, peer.Conn, peer.Buffer[:])
+        if err != nil {
+            return
+        }
+        switch cmdPacket.Type {
+        case mysql.COM_QUERY:
+            peer.onCmdQuery(&cmdPacket)
+        case mysql.COM_BINLOG_DUMP:
+            peer.onCmdBinlogDump(&cmdPacket)
+        case mysql.COM_PING:
+            peer.onCmdPing(&cmdPacket)
+        default:
+            peer.onCmdUnknown(&cmdPacket)
+        }
+        reader := cmdPacket.GetReader(peer.Conn, peer.Buffer[:])
+        io.Copy(ioutil.Discard, &reader)
+    }
+    //time.Sleep(60 * time.Second)
+}
+
+func (peer *Peer) onCmdQuery(cmdPacket *mysql.BaseCommandPacket) (err error) {
+    query := string(peer.Buffer[1:cmdPacket.PacketLength])
+    fmt.Println(query)
+    query = NormalizeSpecialQuery(query)
+    if query == "select @@version_comment limit 1" {
+        fmt.Println(query)
+    }
+    errPacket := mysql.BuildErrPacket(mysql.ER_NOT_SUPPORTED_YET, "this")
+    errPacket.PacketSeq = cmdPacket.PacketSeq + 1
+    err = mysql.WritePacketTo(&errPacket, peer.Conn, peer.Buffer[:])
+    return
+}
+
+func onVersionComment() {
+/*    
+0000: 0100 0001 0127 0000 0203 6465 6600 0000 1140 4076 6572 7369 6f6e 5f63 6f6d 6d65  .....'....def....@@version_comme
+0020: 6e74 000c 2100 5400 0000 fd00 001f 0000 0500 0003 fe00 0002 001d 0000 041c 4d79  nt..!.T.......................My
+0040: 5351 4c20 436f 6d6d 756e 6974 7920 5365 7276 6572 2028 4750 4c29 0500 0005 fe00  SQL Community Server (GPL)......
+0060: 0002 00
+*/
+}
+
+
+func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error) {
+    return
+}
+
+func (peer *Peer) onCmdPing(cmdPacket *mysql.BaseCommandPacket) (err error) {
+    return
+}
+
+func (peer *Peer) onCmdUnknown(cmdPacket *mysql.BaseCommandPacket) (err error) {
+    errPacket := mysql.BuildErrPacket(mysql.ER_UNKNOWN_COM_ERROR)
+    errPacket.PacketSeq = cmdPacket.PacketSeq + 1
+    err = mysql.WritePacketTo(&errPacket, peer.Conn, peer.Buffer[:])
+    return
 }
 
 func isTemporaryNetError(err error) bool {

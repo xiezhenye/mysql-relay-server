@@ -44,7 +44,7 @@ func (self *Client) Connect() (err error){
 
 
 func (self *Client) Command(command Command) (ret OkPacket, err error) {
-    ret, err = ExecCommand(command, self.Conn, self.Buffer[:])
+    ret, err = SendCommand(command, self.Conn, self.Buffer[:])
     return
 }
 
@@ -70,7 +70,7 @@ func (self *BinlogEventStream) GetError() error {
 
 func (self *Client)DumpBinlog(cmdBinlogDump ComBinglogDump) (ret BinlogEventStream) {
     var err error
-    _, err = self.Command(&QueryCommand{"SET @master_binlog_checksum='NONE';"})
+    _, err = self.Command(&QueryCommand{Query:"SET @master_binlog_checksum='NONE';"})
     if err != nil {
         ret.errs<-err
         close(ret.errs)

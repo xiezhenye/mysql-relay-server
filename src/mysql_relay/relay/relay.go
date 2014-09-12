@@ -101,9 +101,10 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<-wr
             rotateUsed = false
         }
         event.HasChecksum = hasBinlogChecksum
-        reader := event.GetReader(self.client.Conn, self.client.Buffer[:], true)
+        event.Reset(true)
+        reader := event.GetReader(self.client.Conn, self.client.Buffer[:])
         if event.IsFake() {
-            // dummy event should be ignored!
+            // fake event should be ignored!
             io.Copy(ioutil.Discard, &reader)
         } else {
             io.CopyN(ioutil.Discard, &reader, 1) //discard first ok byte

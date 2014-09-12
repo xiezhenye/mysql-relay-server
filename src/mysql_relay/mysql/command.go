@@ -17,6 +17,48 @@ type CommandPacket struct {
     Command
 }
 
+type BaseCommandPacket struct {
+    PayloadPacket
+    Type byte
+}
+
+func (self *BaseCommandPacket) ToBuffer(buffer []byte) (writen int, err error) {
+    buffer[0] = self.Type
+    writen = 1
+    return
+}
+
+func (self *BaseCommandPacket) FromBuffer(buffer []byte) (read int, err error) {
+    self.Type = buffer[0]
+    read = 1
+    self.BodyLength = int(self.PacketLength) -  1
+    return
+}
+
+func (self *BaseCommandPacket) CommandType() byte {
+    return self.Type
+}
+
+type StringCommandPacket struct {
+    BaseCommandPacket
+    String string
+}
+
+func (self *StringCommandPacket) ToBuffer(buffer []byte) (writen int, err error) {
+    buffer[0] = self.Type
+    copy(buffer[1:], []byte(self.String))
+    writen = len(self.String) + 1
+    return
+}
+
+func (self *StringCommandPacket) FromBuffer(buffer []byte) (read int, err error) {
+    self.Type = buffer[0]
+    self.String = string(buffer[1:self.PacketLength])
+    read = len(self.String) + 1
+    return
+}
+
+
 type ComRegisterSlave struct {
 /*
 http://dev.mysql.com/doc/internals/en/com-register-slave.html
@@ -34,6 +76,7 @@ string[$len]   slaves password
 */
     ServerId  uint32
 }
+
 
 func (self *ComRegisterSlave) ToBuffer(buffer []byte) (writen int, err error) {
     buffer[0] = byte(COM_REGISTER_SLAVE)
@@ -77,7 +120,7 @@ func (self *ComBinglogDump) CommandType() byte {
     return COM_BINLOG_DUMP
 }
 
-func ExecCommand(command Command, readWriter io.ReadWriter, buffer []byte) (ret OkPacket, err error) {
+func SendCommand(command Command, readWriter io.ReadWriter, buffer []byte) (ret OkPacket, err error) {
     cmdPacket := CommandPacket{Command:command}
     err = WritePacketTo(&cmdPacket, readWriter, buffer)
     if err != nil {

@@ -32,11 +32,16 @@ type ColumnCountPacket struct {
 
 func (self *ColumnCountPacket) FromBuffer(buffer []byte) (read int, err error) {
     var leInt LenencInt
-    read, _ = leInt.FromBuffer(buffer)
+    read, err = leInt.FromBuffer(buffer)
     self.ColumnCount = uint64(leInt)
     return
 }
 
+func (self *ColumnCountPacket) ToBuffer(buffer []byte) (writen int, err error) {
+    leInt := LenencInt(self.ColumnCount)
+    writen, err = leInt.ToBuffer(buffer)
+    return
+}
 
 type ColumnDefinition struct {
     Catalog      string
@@ -122,6 +127,69 @@ func (self *ColumnDefinitionPacket) FromBuffer(buffer []byte) (read int, err err
     return
 }
 
+func (self *ColumnDefinitionPacket) ToBuffer(buffer []byte) (writen int, err error) {
+    var p      int
+    var n      int
+    p = 0
+    // n should always be 1
+    var leStr LenencString
+    var leInt LenencInt
+    leStr = LenencString(self.Catalog)
+    n, _ = leStr.ToBuffer(buffer[p:])
+    p+= n
+    
+    leStr = LenencString(self.Schema)
+    n, _ = leStr.ToBuffer(buffer[p:])
+    p+= n
+    
+    leStr = LenencString(self.Table)
+    n, _ = leStr.ToBuffer(buffer[p:])
+    p+= n
+    
+    leStr = LenencString(self.OrgTable)
+    n, _ = leStr.ToBuffer(buffer[p:])
+    p+= n
+    
+    leStr = LenencString(self.Name)
+    n, _ = leStr.ToBuffer(buffer[p:])
+    p+= n
+    
+    leStr = LenencString(self.OrgName)
+    n, _ = leStr.ToBuffer(buffer[p:])
+    p+= n
+    
+    leInt = LenencInt(self.FixedLength)
+    n, _ = leInt.ToBuffer(buffer[p:])
+    p+= n
+    
+    ENDIAN.PutUint16(buffer[p:], self.CharacterSet)
+    p+= 2
+    
+    ENDIAN.PutUint32(buffer[p:], self.ColumnLength)
+    p+= 4
+    
+    buffer[p] = self.Type
+    p+= 1
+    
+    ENDIAN.PutUint16(buffer[p:], self.Flags)
+    p+= 2
+    
+    buffer[p] = self.Decimals
+    p+= 1
+    
+    ENDIAN.PutUint16(buffer[p:], self.Filler)
+    p+= 2
+    writen = p
+    return
+}
+
+/*
+decimals (1) -- max shown decimal digits
+0x00 for integers and static strings
+0x1f for dynamic strings, double, float
+0x00 to 0x51 for decimals
+*/
+
 
 type ResultRowPacket struct {
     PacketHeader
@@ -133,7 +201,6 @@ type ResultRow struct {
 }
 
 type Value struct {
-    Definition  *ColumnDefinition
     Value       string
     IsNull      bool
 }
@@ -171,5 +238,5 @@ type ResultSet struct {
 type Cursor struct {
     Reader       io.Reader
     Columns      []ColumnDefinition
-    Rows         <-chan []string
+    Rows         chan []string
 }

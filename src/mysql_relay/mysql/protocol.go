@@ -358,12 +358,19 @@ type PayloadReader struct {
     firstBuffer  []byte
 }
 
-func (self *PayloadPacket) GetReader(reader io.Reader, buffer []byte, withHeader bool) PayloadReader {
-    if withHeader {
-        self.Pos = 0
-    } else {
-        self.Pos = int(self.PacketLength) - self.BodyLength
+func (self *PayloadPacket) Reset(skipHeader bool) error {
+    if self.Pos > int(self.PacketLength - 1) {
+        return SEEK_AFTER_READ
     }
+    if skipHeader {
+        self.Pos = int(self.PacketLength) - self.BodyLength
+    } else {
+        self.Pos = 0
+    }
+    return nil
+}
+
+func (self *PayloadPacket) GetReader(reader io.Reader, buffer []byte) PayloadReader {
     return PayloadReader{
         reader: reader,
         header: self,
@@ -420,6 +427,15 @@ type ErrPacket struct {
     ErrorMessage  string
 }
 
+func BuildErrPacket(code uint16, params... interface{}) (ret ErrPacket) {
+    ret = ErrPacket {
+        ErrorCode: code,
+        SqlState: SERVER_SQL_STATES[code],
+        ErrorMessage: fmt.Sprintf(SERVER_ERR_MESSAGES[code], params...),
+    }
+    return
+}
+
 func (self *ErrPacket) FromBuffer(buffer []byte) (read int, err error) {
     if buffer[0] != GRP_ERR {
         err = NOT_ERR_PACKET
@@ -442,7 +458,8 @@ func (self *ErrPacket) ToBuffer(buffer[]byte) (writen int, err error) {
             //
         }
         buffer[p] = '#'
-        copy(buffer[p+1:], []byte(self.SqlState))
+        p+= 1
+        copy(buffer[p:], []byte(self.SqlState))
         p+= len(self.SqlState)
     }
     copy(buffer[p:], []byte(self.ErrorMessage))
