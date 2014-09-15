@@ -50,7 +50,6 @@ type ColumnDefinition struct {
     OrgTable     string
     Name         string
     OrgName      string
-    FixedLength  uint64
     CharacterSet uint16
     ColumnLength uint32
     Type         byte
@@ -77,6 +76,8 @@ func (self *ColumnDefinitionPacket) FromBuffer(buffer []byte) (read int, err err
     // n should always be 1
     
     var leStr LenencString
+    var leInt LenencInt
+
     n, _ = leStr.FromBuffer(buffer[p:])
     self.Catalog = string(leStr)
     p+= n
@@ -101,9 +102,8 @@ func (self *ColumnDefinitionPacket) FromBuffer(buffer []byte) (read int, err err
     self.OrgName = string(leStr)
     p+= n
     
-    var leInt LenencInt
     n, _ = leInt.FromBuffer(buffer[p:])
-    self.FixedLength = uint64(n)
+    //self.FixedLength = uint64(n)
     p+= n
     
     self.CharacterSet = ENDIAN.Uint16(buffer[p:])
@@ -158,7 +158,7 @@ func (self *ColumnDefinitionPacket) ToBuffer(buffer []byte) (writen int, err err
     n, _ = leStr.ToBuffer(buffer[p:])
     p+= n
     
-    leInt = LenencInt(self.FixedLength)
+    leInt = LenencInt(0x0c) //LenencInt(self.FixedLength)
     n, _ = leInt.ToBuffer(buffer[p:])
     p+= n
     
@@ -214,6 +214,10 @@ func (self *ResultRowPacket) FromBuffer(buffer []byte) (read int, err error) {
         err = BUFFER_NOT_SUFFICIENT
         return
     }
+    if buffer[0] == GRP_EOF {
+        read = 0
+        return
+    }
     p := 0
     for i := range self.Values {
         // n should always be 1
@@ -223,6 +227,7 @@ func (self *ResultRowPacket) FromBuffer(buffer []byte) (read int, err error) {
         if _err != nil {
             self.Values[i] = Value{ Value: "", IsNull: true }
         } else {
+            //*((*string)(unsafe.Pointer(&buffer[p+1, p+1+leInt])))
             self.Values[i]= Value{ Value: string(leStr), IsNull: false } 
         }
     }
@@ -230,13 +235,129 @@ func (self *ResultRowPacket) FromBuffer(buffer []byte) (read int, err error) {
     return
 }
 
+func (self *ResultRowPacket) ToBuffer(buffer []byte) (writen int, err error) {
+    p := 0
+    n := 0
+    for i := range self.Values {
+        if self.Values[i].IsNull {
+            buffer[p] = '\xfb'
+            p++
+        } else {
+            leStr := LenencString(self.Values[i].Value)
+            n, err = leStr.ToBuffer(buffer[p:])
+            if err != nil {
+                return
+            }
+            p+= n
+        }
+    }
+    writen = p
+    return
+}
+
+
 type ResultSet struct {
     Columns      []ColumnDefinition
-    Rows         [][]string
+    Rows         []ResultRow
 }
 
 type Cursor struct {
-    Reader       io.Reader
+    ReadWriter   io.ReadWriter
     Columns      []ColumnDefinition
-    Rows         chan []string
+    Rows         chan ResultRow
+    Buffer       []byte
+}
+
+func (self *Cursor) BeginRead() (err error) {
+    countPacket := ColumnCountPacket{}
+    eofPacket := EofPacket{}
+    cdPacket := ColumnDefinitionPacket{}
+    err = ReadPacketFrom(&countPacket, self.ReadWriter, self.Buffer)
+    if err != nil {
+        return
+    }
+    self.Columns = make([]ColumnDefinition, countPacket.ColumnCount)
+    for i := range(self.Columns) {
+        err = ReadPacketFrom(&cdPacket, self.ReadWriter, self.Buffer)
+        if err != nil {
+            return
+        }
+        self.Columns[i] = cdPacket.ColumnDefinition
+    }
+    err = ReadPacketFrom(&eofPacket, self.ReadWriter, self.Buffer)
+    if err != nil {
+        return
+    }
+    rowPacket := ResultRowPacket{}
+    self.Rows = make(chan ResultRow)
+    
+    go func(){
+        defer close(self.Rows)
+        for {
+            err := ReadPacketFrom(&rowPacket, self.ReadWriter, self.Buffer)
+            if err != nil || rowPacket.PacketLength == 0 {
+                return
+            }
+            self.Rows <- rowPacket.ResultRow
+        }
+    }()
+    return
+}
+
+func (self *Cursor) BeginWrite() (err error) {
+    countPacket := ColumnCountPacket{}
+    eofPacket := EofPacket{}
+    cdPacket := ColumnDefinitionPacket{}
+    seq := byte(1)
+    countPacket.ColumnCount = uint64(len(self.Columns))
+    countPacket.PacketSeq = seq
+    err = WritePacketTo(&countPacket, self.ReadWriter, self.Buffer)
+    if err != nil {
+        return
+    }
+    for i := range(self.Columns) {
+        seq++
+        cdPacket.ColumnDefinition = self.Columns[i]
+        cdPacket.PacketSeq = seq
+        err = WritePacketTo(&cdPacket, self.ReadWriter, self.Buffer)
+        if err != nil {
+            return
+        }
+    }
+    seq++
+    eofPacket.PacketSeq = seq
+    err = WritePacketTo(&eofPacket, self.ReadWriter, self.Buffer)
+    if err != nil {
+        return
+    }
+    self.Rows = make(chan ResultRow)
+    rowPacket := ResultRowPacket{}
+    
+    go func() {
+        for row := range self.Rows {
+            seq++
+            rowPacket.PacketSeq = seq
+            rowPacket.ResultRow = row
+            err := WritePacketTo(&rowPacket, self.ReadWriter, self.Buffer)
+            if err != nil {
+                return
+            }
+        }
+        seq++
+        eofPacket.PacketSeq = seq
+        err := WritePacketTo(&eofPacket, self.ReadWriter, self.Buffer)
+        if err != nil {
+            return
+        }
+    }()
+    return
+}
+
+func (self *Cursor) ToRecordSet() (ret ResultSet, err error) {
+    ret.Columns = self.Columns
+    ret.Rows = make([]ResultRow, 0, 10)
+    for row := range self.Rows {
+        ret.Rows = append(ret.Rows, row)
+    }
+    return
 }

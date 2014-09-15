@@ -42,19 +42,15 @@ func (self *Peer) RemoteIP() string {
 }
 
 func (self *Peer) Auth() (err error) {
-    /*
-    peerHost = ...
-    if self.RemoteIP() not valid {
-        errcode := ER_HOST_NOT_PRIVILEGED
+    if !self.Server.CheckHost(self.RemoteIP()) {
         errPacket := mysql.ErrPacket {
-            ErrorCode: ER_HOST_NOT_PRIVILEGED,
+            ErrorCode: mysql.ER_HOST_NOT_PRIVILEGED,
             SqlState : "",
-            ErrorMessage: fmt.Sprintf(SERVER_ERR_MESSAGES[ER_HOST_NOT_PRIVILEGED], peerHost)
+            ErrorMessage: fmt.Sprintf(mysql.SERVER_ERR_MESSAGES[mysql.ER_HOST_NOT_PRIVILEGED], self.RemoteIP()),
         }
         err = mysql.WritePacketTo(&errPacket, self.Conn, self.Buffer[:])
         return
     }
-    */
 
     fmt.Println(self.RemoteIP())
     handshake := mysql.BuildHandShakePacket(self.Server.Version, self.ConnId)
@@ -85,6 +81,13 @@ func (self *Peer) Auth() (err error) {
         }
     }
     return
+}
+
+func (self *Server) CheckHost(host string) bool {
+    // if host != "127.0.0.1" {
+    //     return false
+    // }
+    return true
 }
 
 func (self *Server) Run() (err error) {
@@ -149,7 +152,6 @@ func (self *Server) handle(peer Peer) {
         reader := cmdPacket.GetReader(peer.Conn, peer.Buffer[:])
         io.Copy(ioutil.Discard, &reader)
     }
-    //time.Sleep(60 * time.Second)
 }
 
 func (peer *Peer) onCmdQuery(cmdPacket *mysql.BaseCommandPacket) (err error) {
@@ -157,7 +159,7 @@ func (peer *Peer) onCmdQuery(cmdPacket *mysql.BaseCommandPacket) (err error) {
     fmt.Println(query)
     query = NormalizeSpecialQuery(query)
     if query == "select @@version_comment limit 1" {
-        fmt.Println(query)
+        return onVersionComment(peer)
     }
     errPacket := mysql.BuildErrPacket(mysql.ER_NOT_SUPPORTED_YET, "this")
     errPacket.PacketSeq = cmdPacket.PacketSeq + 1
@@ -165,13 +167,38 @@ func (peer *Peer) onCmdQuery(cmdPacket *mysql.BaseCommandPacket) (err error) {
     return
 }
 
-func onVersionComment() {
+func onVersionComment(peer *Peer) (err error) {
 /*    
+"select @@version_comment limit 1"
 0000: 0100 0001 0127 0000 0203 6465 6600 0000 1140 4076 6572 7369 6f6e 5f63 6f6d 6d65  .....'....def....@@version_comme
 0020: 6e74 000c 2100 5400 0000 fd00 001f 0000 0500 0003 fe00 0002 001d 0000 041c 4d79  nt..!.T.......................My
 0040: 5351 4c20 436f 6d6d 756e 6974 7920 5365 7276 6572 2028 4750 4c29 0500 0005 fe00  SQL Community Server (GPL)......
 0060: 0002 00
 */
+    cols := [1]mysql.ColumnDefinition{
+        {
+            Catalog: "def",
+            Name: "@@version_comment",
+            Decimals: 127,
+            CharacterSet: mysql.LATIN1_SWEDISH_CI,
+            Type: mysql.MYSQL_TYPE_VAR_STRING,
+            ColumnLength: 28,
+        },
+    }
+    cursor := mysql.Cursor {
+        Columns: cols[:],
+        ReadWriter: peer.Conn,
+        Buffer: peer.Buffer[:],
+    }
+    err = cursor.BeginWrite()
+    if err != nil {
+        return
+    }
+    cursor.Rows <- mysql.ResultRow{ Values: []mysql.Value{
+        {Value: mysql.VERSION_COMMENT, IsNull: false} ,
+    }}
+    close(cursor.Rows)
+    return
 }
 
 
@@ -225,7 +252,6 @@ set @master_binlog_checksum=@@global.binlog_checksum
 select @master_binlog_checksum
 select @@global.gtid_mode
 show variables like 'server_uuid'
-
 
 #HY000Unknown system variable 'binlog_checksum'
 #HY000Unknown system variable 'GTID_MODE'

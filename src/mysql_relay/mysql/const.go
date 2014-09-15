@@ -1,7 +1,11 @@
 package mysql
+
 import (
     "encoding/binary"
 )
+
+const VERSION_COMMENT = "MySQL Relay Server 0.1.0"
+
 const (
     CLIENT_LONG_PASSWORD    uint32        = 0x00000001
     CLIENT_FOUND_ROWS                     = 0x00000002
@@ -30,7 +34,6 @@ const (
     CLIENT_REMEMBER_OPTIONS               = 0x80000000
 )
 
-
 const (
     RELAY_CLIENT_CAP uint32 = CLIENT_PROTOCOL_41 | CLIENT_PLUGIN_AUTH | CLIENT_SECURE_CONNECTION | CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
     DEFAULT_SERVER_CAP = 0x807ff7ff
@@ -44,6 +47,7 @@ const (
     GRP_ERR byte = '\xff'
     GRP_EOF byte = '\xfe'
 )
+
 const (
     SERVER_STATUS_IN_TRANS uint16      = 0x0001	
     SERVER_STATUS_AUTOCOMMIT           = 0x0002	
@@ -73,6 +77,7 @@ const (
     COM_STMT_RESET; COM_SET_OPTION; COM_STMT_FETCH
     COM_DAEMON; COM_BINLOG_DUMP_GTID
 )
+
 const (
     BIG5_CHINESE_CI	byte = 1
     LATIN2_CZECH_CS	=	2
