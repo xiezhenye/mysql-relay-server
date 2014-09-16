@@ -158,8 +158,13 @@ func (peer *Peer) onCmdQuery(cmdPacket *mysql.BaseCommandPacket) (err error) {
     query := string(peer.Buffer[1:cmdPacket.PacketLength])
     fmt.Println(query)
     query = NormalizeSpecialQuery(query)
-    if query == "select @@version_comment limit 1" {
-        return onVersionComment(peer)
+    switch query {
+    case "select @@version_comment limit 1":
+        return onSqlVersionComment(peer)
+    case "show variables like 'server_id'":
+        return onSqlServerId(peer)
+    case "show variables like 'server_uuid'":
+        return onSqlServerUuid(peer)
     }
     errPacket := mysql.BuildErrPacket(mysql.ER_NOT_SUPPORTED_YET, "this")
     errPacket.PacketSeq = cmdPacket.PacketSeq + 1
@@ -167,14 +172,8 @@ func (peer *Peer) onCmdQuery(cmdPacket *mysql.BaseCommandPacket) (err error) {
     return
 }
 
-func onVersionComment(peer *Peer) (err error) {
-/*    
-"select @@version_comment limit 1"
-0000: 0100 0001 0127 0000 0203 6465 6600 0000 1140 4076 6572 7369 6f6e 5f63 6f6d 6d65  .....'....def....@@version_comme
-0020: 6e74 000c 2100 5400 0000 fd00 001f 0000 0500 0003 fe00 0002 001d 0000 041c 4d79  nt..!.T.......................My
-0040: 5351 4c20 436f 6d6d 756e 6974 7920 5365 7276 6572 2028 4750 4c29 0500 0005 fe00  SQL Community Server (GPL)......
-0060: 0002 00
-*/
+func onSqlVersionComment(peer *Peer) (err error) {
+    //select @@version_comment limit 1
     cols := [1]mysql.ColumnDefinition{
         {
             Catalog: "def",
@@ -196,6 +195,100 @@ func onVersionComment(peer *Peer) (err error) {
     }
     cursor.Rows <- mysql.ResultRow{ Values: []mysql.Value{
         {Value: mysql.VERSION_COMMENT, IsNull: false} ,
+    }}
+    close(cursor.Rows)
+    return
+}
+
+func onSqlServerId(peer *Peer) (err error) {
+    //show variables like 'server_id'
+    cols := [2]mysql.ColumnDefinition{
+        {
+            Catalog: "def",
+            Schema: "information_schema",
+            Table: "VARIABLES",
+            OrgTable: "VARIABLES",
+            Name: "Variable_name",
+            OrgName: "VARIABLE_NAME",
+            Decimals: 0,
+            CharacterSet: mysql.LATIN1_SWEDISH_CI,
+            Type: mysql.MYSQL_TYPE_VAR_STRING,
+            Flags: mysql.SERVER_STATUS_IN_TRANS,
+            ColumnLength: 192,
+        },
+        {
+            Catalog: "def",
+            Schema: "information_schema",
+            Table: "VARIABLES",
+            OrgTable: "VARIABLES",
+            Name: "Variable_value",
+            OrgName: "VARIABLE_VALUE",
+            Decimals: 0,
+            CharacterSet: mysql.LATIN1_SWEDISH_CI,
+            Type: mysql.MYSQL_TYPE_VAR_STRING,
+            Flags: 0,
+            ColumnLength: 3072,
+        },
+    }
+    cursor := mysql.Cursor {
+        Columns: cols[:],
+        ReadWriter: peer.Conn,
+        Buffer: peer.Buffer[:],
+    }
+    err = cursor.BeginWrite()
+    if err != nil {
+        return
+    }
+    cursor.Rows <- mysql.ResultRow{ Values: []mysql.Value{
+        {Value: "server_id", IsNull: false} ,
+        {Value: "2",         IsNull: false} ,
+    }}
+    close(cursor.Rows)
+    return
+}
+
+func onSqlServerUuid(peer *Peer) (err error) {
+    //show variables like 'server_uuid'
+    cols := [2]mysql.ColumnDefinition{
+        {
+            Catalog: "def",
+            Schema: "information_schema",
+            Table: "VARIABLES",
+            OrgTable: "VARIABLES",
+            Name: "Variable_name",
+            OrgName: "VARIABLE_NAME",
+            Decimals: 0,
+            CharacterSet: mysql.LATIN1_SWEDISH_CI,
+            Type: mysql.MYSQL_TYPE_VAR_STRING,
+            Flags: mysql.SERVER_STATUS_IN_TRANS,
+            ColumnLength: 192,
+        },
+        {
+            Catalog: "def",
+            Schema: "information_schema",
+            Table: "VARIABLES",
+            OrgTable: "VARIABLES",
+            Name: "Variable_value",
+            OrgName: "VARIABLE_VALUE",
+            Decimals: 0,
+            CharacterSet: mysql.LATIN1_SWEDISH_CI,
+            Type: mysql.MYSQL_TYPE_VAR_STRING,
+            Flags: 0,
+            ColumnLength: 3072,
+        },
+    }
+    cursor := mysql.Cursor {
+        Columns: cols[:],
+        ReadWriter: peer.Conn,
+        Buffer: peer.Buffer[:],
+    }
+    err = cursor.BeginWrite()
+    if err != nil {
+        return
+    }
+    cursor.Rows <- mysql.ResultRow{ Values: []mysql.Value{
+        {Value: "server_uuid", IsNull: false} ,
+        {Value: "a2d605d4-67df-11e4-bfdd-08002792fa42",         IsNull: false} ,
     }}
     close(cursor.Rows)
     return
@@ -237,13 +330,13 @@ func NormalizeSpecialQuery(query string) string {
 /*
 sql slave executed:
 
-SELECT UNIX_TIMESTAMP()
-SHOW VARIABLES LIKE 'SERVER_ID'
-SET @master_heartbeat_period= 1799999979520
-SET @master_binlog_checksum= @@global.binlog_checksum
-SELECT @master_binlog_checksum
-SELECT @@GLOBAL.GTID_MODE
-SHOW VARIABLES LIKE 'SERVER_UUID'
+SELECT UNIX_TIMESTAMP();
+SHOW VARIABLES LIKE 'SERVER_ID';
+SET @master_heartbeat_period= 1799999979520;
+SET @master_binlog_checksum= @@global.binlog_checksum;
+SELECT @master_binlog_checksum;
+SELECT @@GLOBAL.GTID_MODE;
+SHOW VARIABLES LIKE 'SERVER_UUID';
  =>
 select unix_timestamp()
 show variables like 'server_id'
