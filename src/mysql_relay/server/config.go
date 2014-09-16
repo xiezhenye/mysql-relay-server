@@ -28,4 +28,5 @@ type ServerConfig struct {
     Addr      string
     ServerId  uint32
     Uuid      string
+    Version   string
 }

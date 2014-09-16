@@ -17,9 +17,10 @@ import (
 type Server struct {
     Addr        string
     Peers       map[uint32]Peer
-    Version     string
     NextConnId  uint32
     Closed      chan uint32
+
+    Config
 }
 
 const PEER_BUFFER_SIZE = 1024
@@ -54,7 +55,7 @@ func (self *Peer) Auth() (err error) {
     }
 
     fmt.Println(self.RemoteIP())
-    handshake := mysql.BuildHandShakePacket(self.Server.Version, self.ConnId)
+    handshake := mysql.BuildHandShakePacket(self.Server.Config.Server.Version, self.ConnId)
     err = mysql.WritePacketTo(&handshake, self.Conn, self.Buffer[:])
     fmt.Println(handshake)
     if err != nil {
@@ -65,9 +66,12 @@ func (self *Peer) Auth() (err error) {
     if err != nil {
         return
     }
-    fmt.Println(auth)
-    hash2 := mysql.Hash2("12345678")
-    authed := mysql.CheckAuth(handshake.AuthString, hash2[:], []byte(auth.AuthResponse))
+    user, ok := self.Server.Config.Users[auth.Username]
+    authed := false
+    if ok {
+        hash2 := mysql.Hash2(user.Password)
+        authed = mysql.CheckAuth(handshake.AuthString, hash2[:], []byte(auth.AuthResponse))
+    }
     fmt.Println(authed)
     if authed {
         okPacket := mysql.OkPacket{}
@@ -94,7 +98,7 @@ func (self *Server) CheckHost(host string) bool {
 func (self *Server) Run() (err error) {
     var listen net.Listener
     var conn   net.Conn
-    listen, err = net.Listen("tcp", self.Addr)
+    listen, err = net.Listen("tcp", self.Config.Server.Addr)
     if err != nil {
         return
     }
