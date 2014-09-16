@@ -116,6 +116,15 @@ func (self *ComBinglogDump) ToBuffer(buffer []byte) (writen int, err error) {
     return
 }
 
+func (self *ComBinglogDump) FromBuffer(buffer []byte) (read int, err error) {
+    self.BinlogPos = binary.LittleEndian.Uint32(buffer[1:])
+    self.Flags = binary.LittleEndian.Uint16(buffer[5:])
+    self.ServerId = binary.LittleEndian.Uint32(buffer[7:])
+    self.BinlogFilename = string(buffer[11:])
+    read = 11+len(self.BinlogFilename)
+    return
+}
+
 func (self *ComBinglogDump) CommandType() byte {
     return COM_BINLOG_DUMP
 }

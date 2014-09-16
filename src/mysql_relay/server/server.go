@@ -8,9 +8,10 @@ import (
     "mysql_relay/util"
     "mysql_relay/mysql"
     "fmt"
-//    "time"
+    "time"
     "io"
     "io/ioutil"
+    "strconv"
 )
 
 type Server struct {
@@ -165,10 +166,23 @@ func (peer *Peer) onCmdQuery(cmdPacket *mysql.BaseCommandPacket) (err error) {
         return onSqlServerId(peer)
     case "show variables like 'server_uuid'":
         return onSqlServerUuid(peer)
+    case "select unix_timestamp()":
+        return onSqlUnixTimestamp(peer)
+    case "select version()":
+        return onSqlVersion(peer)
+    case "set @master_binlog_checksum='none'":
+        return peer.SendOk(cmdPacket.PacketSeq + 1)
     }
     errPacket := mysql.BuildErrPacket(mysql.ER_NOT_SUPPORTED_YET, "this")
     errPacket.PacketSeq = cmdPacket.PacketSeq + 1
     err = mysql.WritePacketTo(&errPacket, peer.Conn, peer.Buffer[:])
+    return
+}
+
+func (peer *Peer) SendOk(seq byte) (err error) {
+    okPacket := mysql.OkPacket{}
+    okPacket.PacketSeq = seq
+    err = mysql.WritePacketTo(&okPacket, peer.Conn, peer.Buffer[:])
     return
 }
 
@@ -195,6 +209,34 @@ func onSqlVersionComment(peer *Peer) (err error) {
     }
     cursor.Rows <- mysql.ResultRow{ Values: []mysql.Value{
         {Value: mysql.VERSION_COMMENT, IsNull: false} ,
+    }}
+    close(cursor.Rows)
+    return
+}
+
+func onSqlVersion(peer *Peer) (err error) {
+    //select version()
+    cols := [1]mysql.ColumnDefinition{
+        {
+            Catalog: "def",
+            Name: "version()",
+            Decimals: 127,
+            CharacterSet: mysql.LATIN1_SWEDISH_CI,
+            Type: mysql.MYSQL_TYPE_VAR_STRING,
+            ColumnLength: 28,
+        },
+    }
+    cursor := mysql.Cursor {
+        Columns: cols[:],
+        ReadWriter: peer.Conn,
+        Buffer: peer.Buffer[:],
+    }
+    err = cursor.BeginWrite()
+    if err != nil {
+        return
+    }
+    cursor.Rows <- mysql.ResultRow{ Values: []mysql.Value{
+        {Value: "5.6.19-log", IsNull: false} ,
     }}
     close(cursor.Rows)
     return
@@ -294,8 +336,38 @@ func onSqlServerUuid(peer *Peer) (err error) {
     return
 }
 
+func onSqlUnixTimestamp(peer *Peer) (err error) {
+    //select unix_timestamp()
+    cols := [1]mysql.ColumnDefinition{
+        {
+            Catalog: "def",
+            Name: "unix_timestamp()",
+            Decimals: 127,
+            CharacterSet: mysql.LATIN1_SWEDISH_CI,
+            Type: mysql.MYSQL_TYPE_LONGLONG,
+            ColumnLength: 11,
+        },
+    }
+    cursor := mysql.Cursor {
+        Columns: cols[:],
+        ReadWriter: peer.Conn,
+        Buffer: peer.Buffer[:],
+    }
+    err = cursor.BeginWrite()
+    if err != nil {
+        return
+    }
+    cursor.Rows <- mysql.ResultRow{ Values: []mysql.Value{
+        {Value: strconv.FormatInt(time.Now().Unix(), 10), IsNull: false} ,
+    }}
+    close(cursor.Rows)
+    return
+}
 
 func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error) {
+    dump := mysql.ComBinglogDump{}
+    dump.FromBuffer(peer.Buffer[:cmdPacket.PacketLength])
+    fmt.Println(dump)
     return
 }
 
@@ -348,4 +420,6 @@ show variables like 'server_uuid'
 
 #HY000Unknown system variable 'binlog_checksum'
 #HY000Unknown system variable 'GTID_MODE'
+
+SELECT VERSION()
 */
