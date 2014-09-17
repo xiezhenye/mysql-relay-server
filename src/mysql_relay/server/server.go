@@ -69,8 +69,10 @@ func (self *Peer) Auth() (err error) {
     user, ok := self.Server.Config.Users[auth.Username]
     authed := false
     if ok {
-        hash2 := mysql.Hash2(user.Password)
-        authed = mysql.CheckAuth(handshake.AuthString, hash2[:], []byte(auth.AuthResponse))
+        if hostContains(user.Host, self.RemoteIP()) {
+            hash2 := mysql.Hash2(user.Password)
+            authed = mysql.CheckAuth(handshake.AuthString, hash2[:], []byte(auth.AuthResponse))
+        }
     }
     fmt.Println(authed)
     if authed {
@@ -89,10 +91,20 @@ func (self *Peer) Auth() (err error) {
 }
 
 func (self *Server) CheckHost(host string) bool {
-    // if host != "127.0.0.1" {
-    //     return false
-    // }
-    return true
+    for _, user := range self.Config.Users {
+        if hostContains(user.Host, host) {
+            return true
+        }
+    }
+    return false
+}
+
+func hostContains(sNet string, sHost string) bool {
+    _, ipNet, err := net.ParseCIDR(sNet)
+    if err != nil {
+        return false
+    }
+    return ipNet.Contains(net.ParseIP(sHost))
 }
 
 func (self *Server) Run() (err error) {

@@ -45,7 +45,7 @@ func main() {
 			Users: map[string] server.UserConfig{
 				"repl":server.UserConfig {
 					Name: "repl",
-					Host: "%",
+					Host: "192.168.56.0/24",
 				    Password: "12345678",
     				Upstream: "local",
 				},
