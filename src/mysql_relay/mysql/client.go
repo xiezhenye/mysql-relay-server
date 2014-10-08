@@ -3,6 +3,7 @@ package mysql
 import (
     "net"
 //    "fmt"
+//	"bufio"
 )
 
 const (
@@ -24,6 +25,7 @@ func (self *Client) Connect() (err error){
     if err != nil {
         return
     }
+
     handshake, err := ReadHandShake(self.Conn, self.Buffer[:])
     if err != nil {
         return

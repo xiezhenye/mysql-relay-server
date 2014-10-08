@@ -21,6 +21,8 @@ const (
     LOG_EVENT_MTS_ISOLATE_F = 0x0200
 )
 
+const LOG_POS_START = 4
+
 const (
     UNKNOWN_EVENT byte = 0x00
     START_EVENT_V3 = 0x01
