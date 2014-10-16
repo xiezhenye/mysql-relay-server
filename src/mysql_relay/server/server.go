@@ -9,10 +9,9 @@ import (
 	"mysql_relay/mysql"
 	"mysql_relay/relay"
 	"fmt"
-	"time"
 	"io"
 	"io/ioutil"
-	"strconv"
+    "os"
 )
 
 type Server struct {
@@ -30,6 +29,7 @@ const PEER_BUFFER_SIZE = 1024
 type Peer struct {
 	ConnId  uint32
 	Server  *Server
+    User    string
 	Conn    net.Conn
 	Buffer  [PEER_BUFFER_SIZE]byte
 }
@@ -44,10 +44,6 @@ func (self *Peer) RemoteAddr() *net.TCPAddr {
 
 func (self *Peer) RemoteIP() string {
 	return self.RemoteAddr().IP.String()
-}
-
-func (self *Peer) GetBuffer() []byte {
-	return self.Buffer[:]
 }
 
 func (self *Peer) Auth() (err error) {
@@ -85,6 +81,7 @@ func (self *Peer) Auth() (err error) {
 	if authed {
 		okPacket := mysql.OkPacket{}
 		okPacket.PacketSeq = auth.PacketSeq+1
+        self.User = auth.Username
 		err = mysql.WritePacketTo(&okPacket, self.Conn, self.Buffer[:])
 	} else {
 		errPacket := mysql.BuildErrPacket(mysql.ER_ACCESS_DENIED_ERROR, auth.Username, self.RemoteIP(), "yes");
@@ -95,6 +92,21 @@ func (self *Peer) Auth() (err error) {
 		}
 	}
 	return
+}
+
+func (self *Peer) GetRelay() *relay.BinlogRelay {
+    if self.User == "" {
+        return nil
+    }
+    user, ok := self.Server.Config.Users[self.User]
+    if !ok {
+        return nil
+    }
+    relay, ok := self.Server.Upstreams[user.Upstream]
+    if !ok {
+        return nil
+    }
+    return relay
 }
 
 func (self *Server) CheckHost(host string) bool {
@@ -211,30 +223,6 @@ func (self *Server) handle(peer *Peer) {
 	}
 }
 
-func (peer *Peer) onCmdQuery(cmdPacket *mysql.BaseCommandPacket) (err error) {
-	query := string(peer.Buffer[1:cmdPacket.PacketLength])
-	fmt.Println(query)
-	query = NormalizeSpecialQuery(query)
-	switch query {
-	case "select @@version_comment limit 1":
-		return onSqlVersionComment(peer)
-	case "show variables like 'server_id'":
-		return onSqlServerId(peer)
-	case "show variables like 'server_uuid'":
-		return onSqlServerUuid(peer)
-	case "select unix_timestamp()":
-		return onSqlUnixTimestamp(peer)
-	case "select version()":
-		return onSqlVersion(peer)
-	case "set @master_binlog_checksum='none'":
-		return peer.SendOk(cmdPacket.PacketSeq + 1)
-	}
-	errPacket := mysql.BuildErrPacket(mysql.ER_NOT_SUPPORTED_YET, "this")
-	errPacket.PacketSeq = cmdPacket.PacketSeq+1
-	err = mysql.WritePacketTo(&errPacket, peer.Conn, peer.Buffer[:])
-	return
-}
-
 func (peer *Peer) SendOk(seq byte) (err error) {
 	okPacket := mysql.OkPacket{}
 	okPacket.PacketSeq = seq
@@ -242,199 +230,43 @@ func (peer *Peer) SendOk(seq byte) (err error) {
 	return
 }
 
-func onSqlVersionComment(peer *Peer) (err error) {
-	//select @@version_comment limit 1
-	cols := [1]mysql.ColumnDefinition{
-		{
-			Catalog: "def",
-			Name: "@@version_comment",
-			Decimals: 127,
-			CharacterSet: mysql.LATIN1_SWEDISH_CI,
-			Type: mysql.MYSQL_TYPE_VAR_STRING,
-			ColumnLength: 28,
-		},
-	}
-	cursor := mysql.Cursor {
-		Columns: cols[:],
-		ReadWriter: peer.Conn,
-		Buffer: peer.Buffer[:],
-	}
-	err = cursor.BeginWrite()
-	if err != nil {
-		return
-	}
-	cursor.Rows <- mysql.ResultRow{ Values: []mysql.Value{
-		{Value: mysql.VERSION_COMMENT, IsNull: false} ,
-	}}
-	close(cursor.Rows)
-	return
-}
-
-func onSqlVersion(peer *Peer) (err error) {
-	//select version()
-	cols := [1]mysql.ColumnDefinition{
-		{
-			Catalog: "def",
-			Name: "version()",
-			Decimals: 127,
-			CharacterSet: mysql.LATIN1_SWEDISH_CI,
-			Type: mysql.MYSQL_TYPE_VAR_STRING,
-			ColumnLength: 28,
-		},
-	}
-	cursor := mysql.Cursor {
-		Columns: cols[:],
-		ReadWriter: peer.Conn,
-		Buffer: peer.Buffer[:],
-	}
-	err = cursor.BeginWrite()
-	if err != nil {
-		return
-	}
-	cursor.Rows <- mysql.ResultRow{ Values: []mysql.Value{
-		{Value: "5.6.19-log", IsNull: false} ,
-	}}
-	close(cursor.Rows)
-	return
-}
-
-func onSqlServerId(peer *Peer) (err error) {
-	//show variables like 'server_id'
-	cols := [2]mysql.ColumnDefinition{
-		{
-			Catalog: "def",
-			Schema: "information_schema",
-			Table: "VARIABLES",
-			OrgTable: "VARIABLES",
-			Name: "Variable_name",
-			OrgName: "VARIABLE_NAME",
-			Decimals: 0,
-			CharacterSet: mysql.LATIN1_SWEDISH_CI,
-			Type: mysql.MYSQL_TYPE_VAR_STRING,
-			Flags: mysql.SERVER_STATUS_IN_TRANS,
-			ColumnLength: 192,
-		},
-		{
-			Catalog: "def",
-			Schema: "information_schema",
-			Table: "VARIABLES",
-			OrgTable: "VARIABLES",
-			Name: "Variable_value",
-			OrgName: "VARIABLE_VALUE",
-			Decimals: 0,
-			CharacterSet: mysql.LATIN1_SWEDISH_CI,
-			Type: mysql.MYSQL_TYPE_VAR_STRING,
-			Flags: 0,
-			ColumnLength: 3072,
-		},
-	}
-	cursor := mysql.Cursor {
-		Columns: cols[:],
-		ReadWriter: peer.Conn,
-		Buffer: peer.Buffer[:],
-	}
-	err = cursor.BeginWrite()
-	if err != nil {
-		return
-	}
-	cursor.Rows <- mysql.ResultRow{ Values: []mysql.Value{
-		{Value: "server_id", IsNull: false} ,
-		{Value: "2", IsNull: false} ,
-	}}
-	close(cursor.Rows)
-	return
-}
-
-func onSqlServerUuid(peer *Peer) (err error) {
-	//show variables like 'server_uuid'
-	cols := [2]mysql.ColumnDefinition{
-		{
-			Catalog: "def",
-			Schema: "information_schema",
-			Table: "VARIABLES",
-			OrgTable: "VARIABLES",
-			Name: "Variable_name",
-			OrgName: "VARIABLE_NAME",
-			Decimals: 0,
-			CharacterSet: mysql.LATIN1_SWEDISH_CI,
-			Type: mysql.MYSQL_TYPE_VAR_STRING,
-			Flags: mysql.SERVER_STATUS_IN_TRANS,
-			ColumnLength: 192,
-		},
-		{
-			Catalog: "def",
-			Schema: "information_schema",
-			Table: "VARIABLES",
-			OrgTable: "VARIABLES",
-			Name: "Variable_value",
-			OrgName: "VARIABLE_VALUE",
-			Decimals: 0,
-			CharacterSet: mysql.LATIN1_SWEDISH_CI,
-			Type: mysql.MYSQL_TYPE_VAR_STRING,
-			Flags: 0,
-			ColumnLength: 3072,
-		},
-	}
-	cursor := mysql.Cursor {
-		Columns: cols[:],
-		ReadWriter: peer.Conn,
-		Buffer: peer.Buffer[:],
-	}
-	err = cursor.BeginWrite()
-	if err != nil {
-		return
-	}
-	cursor.Rows <- mysql.ResultRow{ Values: []mysql.Value{
-		{Value: "server_uuid", IsNull: false} ,
-		{Value: peer.Server.Config.Server.Uuid, IsNull: false} ,
-	}}
-	close(cursor.Rows)
-	return
-}
-
-func onSqlUnixTimestamp(peer *Peer) (err error) {
-	//select unix_timestamp()
-	cols := [1]mysql.ColumnDefinition{
-		{
-			Catalog: "def",
-			Name: "unix_timestamp()",
-			Decimals: 127,
-			CharacterSet: mysql.LATIN1_SWEDISH_CI,
-			Type: mysql.MYSQL_TYPE_LONGLONG,
-			ColumnLength: 11,
-		},
-	}
-	cursor := mysql.Cursor {
-		Columns: cols[:],
-		ReadWriter: peer.Conn,
-		Buffer: peer.Buffer[:],
-	}
-	err = cursor.BeginWrite()
-	if err != nil {
-		return
-	}
-	cursor.Rows <- mysql.ResultRow{ Values: []mysql.Value{
-		{Value: strconv.FormatInt(time.Now().Unix(), 10), IsNull: false} ,
-	}}
-	close(cursor.Rows)
-	return
-}
-
 func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error) {
 	dump := mysql.ComBinglogDump{}
 	dump.FromBuffer(peer.Buffer[:cmdPacket.PacketLength])
-	fmt.Println(dump)
-	return
-}
-
-func (peer *Peer) onCmdPing(cmdPacket *mysql.BaseCommandPacket) (err error) {
-	return
-}
-
-func (peer *Peer) onCmdUnknown(cmdPacket *mysql.BaseCommandPacket) (err error) {
-	errPacket := mysql.BuildErrPacket(mysql.ER_UNKNOWN_COM_ERROR)
-	errPacket.PacketSeq = cmdPacket.PacketSeq+1
-	err = mysql.WritePacketTo(&errPacket, peer.Conn, peer.Buffer[:])
+    relay := peer.GetRelay()
+    currentIndex := relay.FindIndex(dump.BinlogFilename)
+    if currentIndex < 0 {
+        return 
+    }
+    currentPos := dump.BinlogPos
+    var n int64
+    for {
+        // TODO: read events one by one
+        // TODO: add/remove checksum
+        // TODO: concurrent read/write
+        recentIndex, recentPos := relay.CurrentPosition()
+        for currentIndex <= recentIndex {
+            func(){
+                currentFile := relay.NameByIndex(currentIndex)
+                f, err := os.Open(currentFile)
+                if err != nil {
+                    return
+                }
+                defer f.Close()
+                f.Seek(int64(currentPos), 0)
+                n, err = io.Copy(peer.Conn, f)
+                if err != nil {
+                    return
+                }
+                currentPos+= uint32(n)
+            }()
+            if currentIndex != recentIndex {
+                currentPos = 4
+                currentIndex++
+            }
+        }
+        
+    }
 	return
 }
 

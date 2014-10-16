@@ -88,6 +88,32 @@ func (self *BinlogRelay) CurrentPosition() (index int, pos int) {
     return self.curFileId, self.fileIndex[index].Size
 }
 
+func (self *BinlogRelay) FindIndex(name string) int {
+    self.lock.RLock()
+    defer self.lock.RUnlock()
+    for i, index := range self.fileIndex {
+        if index.Name == name {
+             return i
+        }
+    }
+    return -1
+}
+
+func (self *BinlogRelay) NameByIndex(index int) string {
+    self.lock.RLock()
+    defer self.lock.RUnlock()
+    return self.fileIndex[index].Name
+}
+
+func (self *BinlogRelay) PathByIndex(index int) string {
+    name := self.NameByIndex(index)
+    return self.NameToPath(name)
+}
+
+func (self *BinlogRelay) NameToPath(name string) string {
+    return self.localDir + string(os.PathSeparator) + name
+}
+
 func (self *BinlogRelay) writeBinlog(bufChanIn chan<-[]byte, bufChanOut <-chan writeTask) (err error){
     name := ""
     seq := byte(0)
@@ -103,7 +129,7 @@ func (self *BinlogRelay) writeBinlog(bufChanIn chan<-[]byte, bufChanOut <-chan w
             if f != nil {
                 f.Close()
             }
-            path := self.localDir+string(os.PathSeparator)+task.name
+            path := self.NameToPath(task.name)
             if task.pos <= mysql.LOG_POS_START {
                 f, err = os.Create(path)
                 if err != nil {
