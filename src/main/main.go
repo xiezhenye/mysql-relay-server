@@ -57,6 +57,7 @@ func main() {
 				ServerId: 1,
 				Uuid:     "a2d605d4-67df-11e4-bfdd-08002792fa42",
 			},
+            Log: "D:\\test\\binlog\\server.log",
 		},
 	}
 

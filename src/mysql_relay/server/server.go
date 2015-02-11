@@ -183,6 +183,7 @@ func (self *Server) BeginListen() (err error) {
 				continue
 			} else {
 				return
+                // TODO: cleanup goroutines         
 			}
 		} else {
 			delayer.Reset()
@@ -241,9 +242,10 @@ func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error
     currentPos := dump.BinlogPos
     var n int64
     for {
-        // TODO: read events one by one
         // TODO: add/remove checksum
         // TODO: concurrent read/write
+        // TODO: auto delay
+        // TODO: keep file openning when file not changed
         recentIndex, recentPos := relay.CurrentPosition()
         for currentIndex <= recentIndex {
             func(){

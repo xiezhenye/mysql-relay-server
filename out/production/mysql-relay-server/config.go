@@ -4,7 +4,7 @@ type Config struct {
     Upstreams map[string] UpstreamConfig
     Users     map[string] UserConfig
     Server    ServerConfig
-    Log       string
+    
 }
 
 type UpstreamConfig struct {
