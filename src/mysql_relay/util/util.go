@@ -75,36 +75,33 @@ type Logger struct {
     file *os.File
 }
 
-func (self *Logger) Init(String file) (err error) {
+func (self *Logger) Init(file string) (err error) {
     self.file, err = os.OpenFile(file, os.O_APPEND|os.O_RDWR, 0644)
-    if err != nil {
-        ret = nil
-        return
-    }
+    return
 }
 
-func (self *Logger) Log(string level, string message) {
+func (self *Logger) Log(level string, message string) {
     now := time.Now().Format(time.RFC3339)
     if self.file == nil {
         return
     }
-    fmt.Fprintf(self.writer, "%s\t%s\t%s\n", now, level, message)
+    fmt.Fprintf(self.file, "%s\t%s\t%s\n", now, level, message)
     self.file.Sync()
 }
 
-func (self *Logger) Info(string message) {
+func (self *Logger) Info(message string) {
     self.Log("INFO", message)
 }
 
-func (self *Logger) Warn(string message) {
+func (self *Logger) Warn(message string) {
     self.Log("WARN", message)
 }
 
-func (self *Logger) Fatal(string message) {
+func (self *Logger) Fatal(message string) {
     self.Log("FATAL", message)
 }
 
-func (self *Logger) Error(string message) {
+func (self *Logger) Error(message string) {
     self.Log("ERR", message)
 }
 

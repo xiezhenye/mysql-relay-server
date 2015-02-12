@@ -12,18 +12,18 @@ import
 )
 
 type BinlogIndexEventPosEntry struct{
-    Index int
-    Pos int
+    Index uint32
+    Pos uint32
 }
 
 type BinlogIndexEntry struct {
     Name      string
-    Size      int
-    Count     int
+    Size      uint32
+    Count     uint32
     //EventPos  []BinlogIndexEventPosEntry
 }
 
-func (self *BinlogIndexEntry) Append(size int) {
+func (self *BinlogIndexEntry) Append(size uint32) {
     //if self.Count % 256 == 0 {
     //    self.EventPos = append(self.EventPos, BinlogIndexEventPosEntry{ Index:self.Count, Pos:self.Size })
     //}
@@ -53,7 +53,7 @@ type writeTask struct {
     buffer []byte
     name   string
     pos    int64
-    size   int
+    size   uint32
     seq    byte
 }
 
@@ -68,16 +68,20 @@ func (self *BinlogRelay) Init(client mysql.Client, localDir string, startFile st
     self.ReloadPos()
 }
 
-func (self *BinlogRelay) ReloadPos() {
+func (self *BinlogRelay) ReloadPos() error {
     for {
-        filename := mysql.NextBinlogName(self.startFile)
+        filename, err := mysql.NextBinlogName(self.startFile)
+        if err != nil {
+            return err
+        }
         if stat, err := os.Stat(filename); os.IsNotExist(err) {
+            self.startPos = uint32(stat.Size())
+            self.logger.Info(fmt.Sprintf("reload pos to %s:%ud", self.startFile, self.startPos))
             break
         }
         self.startFile = filename
     }
-    self.startPos = uint32(stat.Size())
-    self.logger.Info(fmt.Sprintf("reload pos to %s:%ud", self.startFile, self.startPos))
+    return nil
 }
 
 func (self *BinlogRelay) appendIndex(name string) {
@@ -93,13 +97,13 @@ func (self *BinlogRelay) appendIndex(name string) {
     self.fileIndex[self.curFileId].Size = 4
 }
 
-func (self *BinlogRelay) appendEvent(size int) {
+func (self *BinlogRelay) appendEvent(size uint32) {
     self.lock.Lock()
     defer self.lock.Unlock()
     self.fileIndex[self.curFileId].Append(size)
 }
 
-func (self *BinlogRelay) CurrentPosition() (index int, pos int) {
+func (self *BinlogRelay) CurrentPosition() (index int, pos uint32) {
     self.lock.RLock()
     defer self.lock.RUnlock()
     return self.curFileId, self.fileIndex[index].Size
@@ -139,11 +143,11 @@ func (self *BinlogRelay) writeBinlog(bufChanIn chan<-[]byte, bufChanOut <-chan w
         close(bufChanIn)
         self.logger.Info("writer ended")
         if err != nil {
-            self.logger.Err("writer: " + err.Error())
+            self.logger.Error("writer: " + err.Error())
         }
     }()
     ib := 0
-    eventSize := 0
+    eventSize := uint32(0)
     for task := range bufChanOut {
         if task.name != name {
             self.logger.Info(fmt.Sprintf("writer rotated to %s", task.name))
@@ -195,7 +199,7 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<-wr
         close(bufChanOut)
         self.logger.Info("dumper ended")
         if err != nil {
-            self.logger.Err("dumper: " + err.Error())
+            self.logger.Error("dumper: " + err.Error())
         }
     }()
     if self.startPos < mysql.LOG_POS_START {
@@ -241,7 +245,7 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<-wr
                 buffer := <-bufChanIn
                 n, err = reader.Read(buffer)
                 if n > 0 {
-                    bufChanOut<-writeTask{name:filename, buffer:buffer, size: n, seq: event.PacketSeq, pos: int64(curPos)}
+                    bufChanOut<-writeTask{name:filename, buffer:buffer, size: uint32(n), seq: event.PacketSeq, pos: int64(curPos)}
                 }
                 if err != nil {
                     if err == io.EOF {

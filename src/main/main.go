@@ -1,35 +1,27 @@
 package main
 
 import (
-	//"mysql_relay/mysql"
-	//"mysql_relay/relay"
 	"fmt"
 	"mysql_relay/server"
+    "flag"
 )
 
 func main() {
 	var err error
-	/*
-	   c := mysql.Client {
-	       ServerAddr: "127.0.0.1:3306"
-	       ServerAddr: "192.168.56.102:3306"
-	       Username:   "root"
-	       Password:   "12345678"
-	       ServerId:   12
-	   }
-	   err = c.Connect()
-	   if err != nil {
-	       fmt.Println(err)
-	       return
-	   }
-	   var relay relay.BinlogRelay
-	   relay.Init(c, "D:\\test\\binlog", "log-bin.000001")
-	   err = relay.Run()
-	   if err != nil {
-	       fmt.Println(err)
-	   }
-	*/
-
+    var conf server.Config
+    var confPath string
+    flag.StringVar(&confPath, "conf", "", "config file path")
+    flag.Parse()
+    err = conf.FromJsonFile(confPath)
+    if err != nil {
+        fmt.Println(err)
+        return
+    }
+    s := server.Server {
+		Config: conf,
+    }
+    
+    /*
 	s := server.Server{
 		Config: server.Config{
 			Upstreams: map[string]server.UpstreamConfig{
@@ -60,7 +52,7 @@ func main() {
             Log: "D:\\test\\binlog\\server.log",
 		},
 	}
-
+    */
 	err = s.Run()
 	if err != nil {
 		fmt.Println(err)

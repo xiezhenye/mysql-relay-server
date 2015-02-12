@@ -237,17 +237,21 @@ func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error
     relay := peer.GetRelay()
     currentIndex := relay.FindIndex(dump.BinlogFilename)
     if currentIndex < 0 {
+        // binlog not exists
         return 
     }
     currentPos := dump.BinlogPos
     var n int64
+    var delayer util.AutoDelayer
     for {
         // TODO: add/remove checksum
         // TODO: concurrent read/write
-        // TODO: auto delay
         // TODO: keep file openning when file not changed
-        recentIndex, recentPos := relay.CurrentPosition()
-        for currentIndex <= recentIndex {
+        relayIndex, relayPos := relay.CurrentPosition()
+        for currentIndex == relayIndex && currentPos == relayPos {
+            delayer.Delay()
+        }
+        for currentIndex <= relayIndex && currentPos < relayPos {
             func(){
                 currentFile := relay.NameByIndex(currentIndex)
                 f, err := os.Open(currentFile)
@@ -255,14 +259,18 @@ func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error
                     return
                 }
                 defer f.Close()
-                f.Seek(int64(currentPos), 0)
+                _, err = f.Seek(int64(currentPos), 0)
+                if err != nil {
+                    // position not exists
+                    return
+                }
                 n, err = io.Copy(peer.Conn, f)
                 if err != nil {
                     return
                 }
                 currentPos+= uint32(n)
             }()
-            if currentIndex != recentIndex {
+            if currentIndex < relayIndex {
                 currentPos = 4
                 currentIndex++
             }

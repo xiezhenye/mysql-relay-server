@@ -1,5 +1,11 @@
 package server
 
+import (
+    "encoding/json"
+    "os"
+    "io/ioutil"
+)
+
 type Config struct {
     Upstreams map[string] UpstreamConfig
     Users     map[string] UserConfig
@@ -29,4 +35,23 @@ type ServerConfig struct {
     ServerId  uint32
     Uuid      string
     Version   string
+}
+
+func (self *Config) FromJson(buf []byte) error {
+	return json.Unmarshal(buf, self)
+}
+
+func (self *Config) FromJsonFile(path string) (err error) {
+    var f *os.File
+    f, err = os.Open(path)
+    if err != nil {
+        return
+    }
+    var buf []byte
+    buf, err = ioutil.ReadAll(f)
+    if err != nil {
+        return
+    }
+    err = self.FromJson(buf)
+    return 
 }
