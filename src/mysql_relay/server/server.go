@@ -1,37 +1,37 @@
 package server
 
 import (
-	"net"
-	"sync/atomic"
-	"regexp"
-	"strings"
-	"mysql_relay/util"
-	"mysql_relay/mysql"
-	"mysql_relay/relay"
 	"fmt"
 	"io"
 	"io/ioutil"
-    "os"
+	"mysql_relay/mysql"
+	"mysql_relay/relay"
+	"mysql_relay/util"
+	"net"
+	"os"
+	"regexp"
+	"strings"
+	"sync/atomic"
 )
 
 type Server struct {
-	Addr        string
-	Peers       map[uint32] *Peer
-	NextConnId  uint32
-	Closed      chan uint32
+	Addr       string
+	Peers      map[uint32]*Peer
+	NextConnId uint32
+	Closed     chan uint32
 	//
 	Config
-	Upstreams   map[string] *relay.BinlogRelay
+	Upstreams map[string]*relay.BinlogRelay
 }
 
 const PEER_BUFFER_SIZE = 1024
 
 type Peer struct {
-	ConnId  uint32
-	Server  *Server
-    User    string
-	Conn    net.Conn
-	Buffer  [PEER_BUFFER_SIZE]byte
+	ConnId uint32
+	Server *Server
+	User   string
+	Conn   net.Conn
+	Buffer [PEER_BUFFER_SIZE]byte
 }
 
 func (self *Peer) Close() {
@@ -48,9 +48,9 @@ func (self *Peer) RemoteIP() string {
 
 func (self *Peer) Auth() (err error) {
 	if !self.Server.CheckHost(self.RemoteIP()) {
-		errPacket := mysql.ErrPacket {
-			ErrorCode: mysql.ER_HOST_NOT_PRIVILEGED,
-			SqlState : "",
+		errPacket := mysql.ErrPacket{
+			ErrorCode:    mysql.ER_HOST_NOT_PRIVILEGED,
+			SqlState:     "",
 			ErrorMessage: fmt.Sprintf(mysql.SERVER_ERR_MESSAGES[mysql.ER_HOST_NOT_PRIVILEGED], self.RemoteIP()),
 		}
 		err = mysql.WritePacketTo(&errPacket, self.Conn, self.Buffer[:])
@@ -80,12 +80,12 @@ func (self *Peer) Auth() (err error) {
 	fmt.Println(authed)
 	if authed {
 		okPacket := mysql.OkPacket{}
-		okPacket.PacketSeq = auth.PacketSeq+1
-        self.User = auth.Username
+		okPacket.PacketSeq = auth.PacketSeq + 1
+		self.User = auth.Username
 		err = mysql.WritePacketTo(&okPacket, self.Conn, self.Buffer[:])
 	} else {
-		errPacket := mysql.BuildErrPacket(mysql.ER_ACCESS_DENIED_ERROR, auth.Username, self.RemoteIP(), "yes");
-		errPacket.PacketSeq = auth.PacketSeq+1
+		errPacket := mysql.BuildErrPacket(mysql.ER_ACCESS_DENIED_ERROR, auth.Username, self.RemoteIP(), "yes")
+		errPacket.PacketSeq = auth.PacketSeq + 1
 		err = mysql.WritePacketTo(&errPacket, self.Conn, self.Buffer[:])
 		if err == nil {
 			err = errPacket.ToError()
@@ -95,18 +95,18 @@ func (self *Peer) Auth() (err error) {
 }
 
 func (self *Peer) GetRelay() *relay.BinlogRelay {
-    if self.User == "" {
-        return nil
-    }
-    user, ok := self.Server.Config.Users[self.User]
-    if !ok {
-        return nil
-    }
-    relay, ok := self.Server.Upstreams[user.Upstream]
-    if !ok {
-        return nil
-    }
-    return relay
+	if self.User == "" {
+		return nil
+	}
+	user, ok := self.Server.Config.Users[self.User]
+	if !ok {
+		return nil
+	}
+	relay, ok := self.Server.Upstreams[user.Upstream]
+	if !ok {
+		return nil
+	}
+	return relay
 }
 
 func (self *Server) CheckHost(host string) bool {
@@ -127,14 +127,14 @@ func hostContains(sNet string, sHost string) bool {
 }
 
 func (self *Server) Init() {
-	self.Upstreams = make(map[string] *relay.BinlogRelay)
+	self.Upstreams = make(map[string]*relay.BinlogRelay)
 	self.Closed = make(chan uint32)
-	self.Peers = make(map[uint32] *Peer)
+	self.Peers = make(map[uint32]*Peer)
 }
 
 func (self *Server) StartUpstreams() (err error) {
 	for name, upstreamConfig := range self.Config.Upstreams {
-		c := mysql.Client {
+		c := mysql.Client{
 			ServerAddr: upstreamConfig.ServerAddr,
 			Username:   upstreamConfig.Username,
 			Password:   upstreamConfig.Password,
@@ -175,7 +175,7 @@ func (self *Server) BeginListen() (err error) {
 	}()
 	for {
 		var delayer util.AutoDelayer
-		var conn   net.Conn
+		var conn net.Conn
 		conn, err = listen.Accept()
 		if err != nil {
 			if isTemporaryNetError(err) {
@@ -183,13 +183,13 @@ func (self *Server) BeginListen() (err error) {
 				continue
 			} else {
 				return
-                // TODO: cleanup goroutines         
+				// TODO: cleanup goroutines
 			}
 		} else {
 			delayer.Reset()
 		}
 		connId := self.GetNextConnId()
-		self.Peers[connId] = &Peer{ConnId:connId, Conn:conn, Server:self}
+		self.Peers[connId] = &Peer{ConnId: connId, Conn: conn, Server: self}
 		go self.handle(self.Peers[connId])
 	}
 }
@@ -197,7 +197,7 @@ func (self *Server) BeginListen() (err error) {
 func (self *Server) handle(peer *Peer) {
 	defer func() {
 		peer.Close()
-		self.Closed<-peer.ConnId
+		self.Closed <- peer.ConnId
 	}()
 	err := peer.Auth()
 	if err != nil {
@@ -234,49 +234,49 @@ func (peer *Peer) SendOk(seq byte) (err error) {
 func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error) {
 	dump := mysql.ComBinglogDump{}
 	dump.FromBuffer(peer.Buffer[:cmdPacket.PacketLength])
-    relay := peer.GetRelay()
-    currentIndex := relay.FindIndex(dump.BinlogFilename)
-    if currentIndex < 0 {
-        // binlog not exists
-        return 
-    }
-    currentPos := dump.BinlogPos
-    var n int64
-    var delayer util.AutoDelayer
-    for {
-        // TODO: add/remove checksum
-        // TODO: concurrent read/write
-        // TODO: keep file openning when file not changed
-        relayIndex, relayPos := relay.CurrentPosition()
-        for currentIndex == relayIndex && currentPos == relayPos {
-            delayer.Delay()
-        }
-        for currentIndex <= relayIndex && currentPos < relayPos {
-            func(){
-                currentFile := relay.NameByIndex(currentIndex)
-                f, err := os.Open(currentFile)
-                if err != nil {
-                    return
-                }
-                defer f.Close()
-                _, err = f.Seek(int64(currentPos), 0)
-                if err != nil {
-                    // position not exists
-                    return
-                }
-                n, err = io.Copy(peer.Conn, f)
-                if err != nil {
-                    return
-                }
-                currentPos+= uint32(n)
-            }()
-            if currentIndex < relayIndex {
-                currentPos = 4
-                currentIndex++
-            }
-        }
-        
-    }
+	relay := peer.GetRelay()
+	currentIndex := relay.FindIndex(dump.BinlogFilename)
+	if currentIndex < 0 {
+		// binlog not exists
+		return
+	}
+	currentPos := dump.BinlogPos
+	var n int64
+	var delayer util.AutoDelayer
+	for {
+		// TODO: add/remove checksum
+		// TODO: concurrent read/write
+		// TODO: keep file openning when file not changed
+		relayIndex, relayPos := relay.CurrentPosition()
+		for currentIndex == relayIndex && currentPos == relayPos {
+			delayer.Delay()
+		}
+		for currentIndex <= relayIndex && currentPos < relayPos {
+			func() {
+				currentFile := relay.NameByIndex(currentIndex)
+				f, err := os.Open(currentFile)
+				if err != nil {
+					return
+				}
+				defer f.Close()
+				_, err = f.Seek(int64(currentPos), 0)
+				if err != nil {
+					// position not exists
+					return
+				}
+				n, err = io.Copy(peer.Conn, f)
+				if err != nil {
+					return
+				}
+				currentPos += uint32(n)
+			}()
+			if currentIndex < relayIndex {
+				currentPos = 4
+				currentIndex++
+			}
+		}
+
+	}
 	return
 }
 
@@ -296,28 +296,3 @@ var normalizeRegEx, _ = regexp.Compile("[ ]*([ ~!%^&*()=+<>,/.-])[ ]*")
 func NormalizeSpecialQuery(query string) string {
 	return strings.ToLower(normalizeRegEx.ReplaceAllString(query, "$1"))
 }
-
-/*
-sql slave executed:
-
-SELECT UNIX_TIMESTAMP();
-SHOW VARIABLES LIKE 'SERVER_ID';
-SET @master_heartbeat_period= 1799999979520;
-SET @master_binlog_checksum= @@global.binlog_checksum;
-SELECT @master_binlog_checksum;
-SELECT @@GLOBAL.GTID_MODE;
-SHOW VARIABLES LIKE 'SERVER_UUID';
- =>
-select unix_timestamp()
-show variables like 'server_id'
-set @master_heartbeat_period=1799999979520
-set @master_binlog_checksum=@@global.binlog_checksum
-select @master_binlog_checksum
-select @@global.gtid_mode
-show variables like 'server_uuid'
-
-#HY000Unknown system variable 'binlog_checksum'
-#HY000Unknown system variable 'GTID_MODE'
-
-SELECT VERSION()
-*/
