@@ -145,7 +145,7 @@ func (self *Server) StartUpstreams() (err error) {
 			return
 		}
 		self.Upstreams[name] = new(relay.BinlogRelay)
-		self.Upstreams[name].Init(c, upstreamConfig.LocalDir, upstreamConfig.StartFile)
+		self.Upstreams[name].Init(name, c, upstreamConfig.LocalDir, upstreamConfig.StartFile)
 		go self.Upstreams[name].Run()
 	}
 	return
