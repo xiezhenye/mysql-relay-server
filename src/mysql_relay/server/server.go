@@ -27,11 +27,12 @@ type Server struct {
 const PEER_BUFFER_SIZE = 1024
 
 type Peer struct {
-	ConnId uint32
-	Server *Server
-	User   string
-	Conn   net.Conn
-	Buffer [PEER_BUFFER_SIZE]byte
+	ConnId         uint32
+	Server         *Server
+	User           string
+	Conn           net.Conn
+	ClientServerId uint32
+	Buffer         [PEER_BUFFER_SIZE]byte
 }
 
 func (self *Peer) Close() {
@@ -209,6 +210,7 @@ func (self *Server) handle(peer *Peer) {
 		if err != nil {
 			return
 		}
+		fmt.Println("Command: " + mysql.CommandNames[cmdPacket.Type])
 		switch cmdPacket.Type {
 		case mysql.COM_QUERY:
 			peer.onCmdQuery(&cmdPacket)
@@ -216,6 +218,11 @@ func (self *Server) handle(peer *Peer) {
 			peer.onCmdBinlogDump(&cmdPacket)
 		case mysql.COM_PING:
 			peer.onCmdPing(&cmdPacket)
+		case mysql.COM_QUIT:
+			peer.onCmdQuit(&cmdPacket)
+			break
+		case mysql.COM_REGISTER_SLAVE:
+			peer.onCmdRegisterSlave(&cmdPacket)
 		default:
 			peer.onCmdUnknown(&cmdPacket)
 		}
@@ -228,6 +235,14 @@ func (peer *Peer) SendOk(seq byte) (err error) {
 	okPacket := mysql.OkPacket{}
 	okPacket.PacketSeq = seq
 	err = mysql.WritePacketTo(&okPacket, peer.Conn, peer.Buffer[:])
+	return
+}
+
+func (peer *Peer) onCmdRegisterSlave(cmdPacket *mysql.BaseCommandPacket) (err error) {
+	regSlave := mysql.ComRegisterSlave{}
+	regSlave.FromBuffer(peer.Buffer[:cmdPacket.PacketLength])
+	peer.ClientServerId = regSlave.ServerId
+	return peer.SendOk(cmdPacket.PacketSeq + 1)
 	return
 }
 
@@ -277,6 +292,10 @@ func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error
 		}
 
 	}
+	return
+}
+
+func (peer *Peer) onCmdQuit(cmdPacket *mysql.BaseCommandPacket) (err error) {
 	return
 }
 

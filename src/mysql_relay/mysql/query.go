@@ -57,6 +57,21 @@ type ColumnDefinition struct {
 	Filler       uint16
 }
 
+const (
+	COL_DEF_NOT_NULL = 1 << iota
+	COL_DEF_PRIMARY_KEY
+	COL_DEF_UNIQUE_KEY
+	COL_DEF_MULTIPLE_KEY
+	COL_DEF_BLOB
+	COL_DEF_UNSIGNED
+	COL_DEF_ZERO_FILL
+	COL_DEF_BINARY
+	COL_DEF_ENUM
+	COL_DEF_AUTO_INCREMENT
+	COL_DEF_TIMESTAMP
+	COL_DEF_SET
+)
+
 type ColumnDefinitionPacket struct {
 	/*
 	   http://dev.mysql.com/doc/internals/en/com-query-response.html#packet-Protocol::ColumnDefinition41
