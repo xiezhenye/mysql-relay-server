@@ -26,7 +26,7 @@ func (self *BinlogIndexEntry) Append(size uint32) {
 	//if self.Count % 256 == 0 {
 	//    self.EventPos = append(self.EventPos, BinlogIndexEventPosEntry{ Index:self.Count, Pos:self.Size })
 	//}
-	self.Count++
+	//self.Count++
 	self.Size += size
 }
 
@@ -74,18 +74,26 @@ func (self *BinlogRelay) Init(name string, client mysql.Client, localDir string,
 
 func (self *BinlogRelay) ReloadPos() error {
 	// TODO: use binlog list
+	filename := self.startFile
 	for {
-		filename, err := mysql.NextBinlogName(self.startFile)
-		if err != nil {
-			self.logger.Error(err.Error())
-			return err
-		}
 		stat, err := os.Stat(self.NameToPath(filename))
 		if os.IsNotExist(err) {
 			break
 		}
 		self.startFile = filename
 		self.startPos = uint32(stat.Size())
+
+		self.fileIndex = append(self.fileIndex, BinlogIndexEntry{
+			Name: filename,
+			Size: uint32(stat.Size()),
+		})
+		self.curFileId = len(self.fileIndex) - 1
+
+		filename, err = mysql.NextBinlogName(self.startFile)
+		if err != nil {
+			self.logger.Error(err.Error())
+			return err
+		}
 	}
 	self.logger.Info("continue dump at %s:%d", self.startFile, self.startPos)
 	return nil
@@ -120,6 +128,7 @@ func (self *BinlogRelay) FindIndex(name string) int {
 	self.lock.RLock()
 	defer self.lock.RUnlock()
 	for i, index := range self.fileIndex {
+		fmt.Println(index.Name + "=?" + name)
 		if index.Name == name {
 			return i
 		}
@@ -187,7 +196,7 @@ func (self *BinlogRelay) writeBinlog(bufChanIn chan<- []byte, bufChanOut <-chan 
 		}
 		eventSize += task.size
 		if seq != task.seq { // next event
-			//self.appendEvent(eventSize)
+			self.appendEvent(eventSize)
 			seq = task.seq
 			ib++
 			if ib >= self.syncBinlog {
@@ -220,7 +229,6 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<- w
 	})
 
 	filename := self.startFile
-	//rotateUsed := true
 	hasBinlogChecksum := false
 	curPos := self.startPos
 
@@ -243,7 +251,6 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<- w
 			filename = rotate.Name
 			curPos = uint32(rotate.Position)
 			self.logger.Info("rotate event: %s:%d", filename, curPos)
-			//rotateUsed = true
 		}
 
 		err = event.Reset(false)

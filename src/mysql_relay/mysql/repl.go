@@ -132,7 +132,7 @@ func (self *BinlogEventPacket) FromBuffer(buffer []byte) (read int, err error) {
 }
 
 func (self *BinlogEventPacket) IsFake() bool {
-	return self.LogPos == 0 //(self.Flags&LOG_EVENT_ARTIFICIAL_F != 0)
+	return self.LogPos == 0
 }
 
 type FormatDescriptionEvent struct {

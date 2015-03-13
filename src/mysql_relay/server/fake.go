@@ -61,8 +61,7 @@ func (peer *Peer) onCmdQuery(cmdPacket *mysql.BaseCommandPacket) (err error) {
 		return selectVar(peer, "@@global.gtid_mode", mysql.MYSQL_TYPE_VAR_STRING, mysql.StringValue("OFF"))
 
 	case "select @master_binlog_checksum":
-		return selectMasterBinlogChecksum(peer)
-		//return selectVar(peer, "@master_binlog_checksum", mysql.MYSQL_TYPE_LONG_BLOB, mysql.NullValue())
+		return selectVar(peer, "@master_binlog_checksum", mysql.MYSQL_TYPE_VAR_STRING, mysql.StringValue("CRC32"))
 	}
 	if strings.HasPrefix(query, "set @master_heartbeat_period=") {
 		return peer.SendOk(cmdPacket.PacketSeq + 1)

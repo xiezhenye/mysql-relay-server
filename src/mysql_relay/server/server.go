@@ -213,18 +213,21 @@ func (self *Server) handle(peer *Peer) {
 		fmt.Println("Command: " + mysql.CommandNames[cmdPacket.Type])
 		switch cmdPacket.Type {
 		case mysql.COM_QUERY:
-			peer.onCmdQuery(&cmdPacket)
+			err = peer.onCmdQuery(&cmdPacket)
 		case mysql.COM_BINLOG_DUMP:
-			peer.onCmdBinlogDump(&cmdPacket)
+			err = peer.onCmdBinlogDump(&cmdPacket)
 		case mysql.COM_PING:
-			peer.onCmdPing(&cmdPacket)
+			err = peer.onCmdPing(&cmdPacket)
 		case mysql.COM_QUIT:
-			peer.onCmdQuit(&cmdPacket)
+			err = peer.onCmdQuit(&cmdPacket)
 			break
 		case mysql.COM_REGISTER_SLAVE:
-			peer.onCmdRegisterSlave(&cmdPacket)
+			err = peer.onCmdRegisterSlave(&cmdPacket)
 		default:
-			peer.onCmdUnknown(&cmdPacket)
+			err = peer.onCmdUnknown(&cmdPacket)
+		}
+		if err != nil {
+			fmt.Println(err.Error())
 		}
 		reader := cmdPacket.GetReader(peer.Conn, peer.Buffer[:])
 		io.Copy(ioutil.Discard, &reader)
@@ -250,41 +253,60 @@ func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error
 	dump := mysql.ComBinglogDump{}
 	dump.FromBuffer(peer.Buffer[:cmdPacket.PacketLength])
 	relay := peer.GetRelay()
+	fmt.Println()
+	fmt.Printf("peer %s: dump from %s:%d\n", peer.RemoteAddr(), dump.BinlogFilename, dump.BinlogPos)
 	currentIndex := relay.FindIndex(dump.BinlogFilename)
 	if currentIndex < 0 {
 		// binlog not exists
+		fmt.Printf("peer %s: binlog not exists\n", peer.RemoteAddr())
+		// TODO: return error code
 		return
 	}
 	currentPos := dump.BinlogPos
 	var n int64
 	var delayer util.AutoDelayer
 	for {
+		// ONE BY ONE event prepend with \x00
+
 		// TODO: add/remove checksum
 		// TODO: concurrent read/write
+
 		// TODO: keep file openning when file not changed
 		relayIndex, relayPos := relay.CurrentPosition()
 		for currentIndex == relayIndex && currentPos == relayPos {
 			delayer.Delay()
 		}
+		fmt.Printf("cur: %d, relay: %d\n", currentPos, relayPos)
 		for currentIndex <= relayIndex && currentPos < relayPos {
-			func() {
-				currentFile := relay.NameByIndex(currentIndex)
+			copied := func() int64 {
+				// TODO: optimize file open
+				currentFile := relay.PathByIndex(currentIndex)
+				fmt.Printf("peer %s: open %s\n", peer.RemoteAddr(), currentFile)
 				f, err := os.Open(currentFile)
 				if err != nil {
-					return
+					return 0
 				}
 				defer f.Close()
 				_, err = f.Seek(int64(currentPos), 0)
+				fmt.Printf("peer %s: seek to %d\n", peer.RemoteAddr(), currentPos)
 				if err != nil {
 					// position not exists
-					return
+					return 0
 				}
 				n, err = io.Copy(peer.Conn, f)
-				if err != nil {
-					return
-				}
-				currentPos += uint32(n)
+				fmt.Printf("peer %s: %d bytes copied\n", peer.RemoteAddr(), n)
+				return n
+
 			}()
+
+			if err != nil {
+				return
+			}
+			if copied <= 0 {
+				delayer.Delay()
+				break
+			}
+			currentPos += uint32(copied)
 			if currentIndex < relayIndex {
 				currentPos = 4
 				currentIndex++
