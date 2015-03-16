@@ -26,7 +26,7 @@ func (self *BinlogIndexEntry) Append(size uint32) {
 	//if self.Count % 256 == 0 {
 	//    self.EventPos = append(self.EventPos, BinlogIndexEventPosEntry{ Index:self.Count, Pos:self.Size })
 	//}
-	//self.Count++
+	self.Count++
 	self.Size += size
 }
 
@@ -137,9 +137,13 @@ func (self *BinlogRelay) FindIndex(name string) int {
 }
 
 func (self *BinlogRelay) NameByIndex(index int) string {
+	return self.BinlogInfoByIndex(index).Name
+}
+
+func (self *BinlogRelay) BinlogInfoByIndex(index int) BinlogIndexEntry {
 	self.lock.RLock()
 	defer self.lock.RUnlock()
-	return self.fileIndex[index].Name
+	return self.fileIndex[index]
 }
 
 func (self *BinlogRelay) PathByIndex(index int) string {
@@ -183,7 +187,7 @@ func (self *BinlogRelay) writeBinlog(bufChanIn chan<- []byte, bufChanOut <-chan 
 				self.appendIndex(task.name)
 
 			} else {
-				f, err = os.OpenFile(path, os.O_RDWR, 0666)
+				f, err = os.OpenFile(path, os.O_RDWR, 0664)
 			}
 			if err != nil {
 				return
@@ -252,7 +256,6 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<- w
 			curPos = uint32(rotate.Position)
 			self.logger.Info("rotate event: %s:%d", filename, curPos)
 		}
-
 		err = event.Reset(false)
 		if err != nil {
 			return

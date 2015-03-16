@@ -33,6 +33,7 @@ type Peer struct {
 	Conn           net.Conn
 	ClientServerId uint32
 	Buffer         [PEER_BUFFER_SIZE]byte
+	seq            byte
 }
 
 func (self *Peer) Close() {
@@ -253,7 +254,6 @@ func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error
 	dump := mysql.ComBinglogDump{}
 	dump.FromBuffer(peer.Buffer[:cmdPacket.PacketLength])
 	relay := peer.GetRelay()
-	fmt.Println()
 	fmt.Printf("peer %s: dump from %s:%d\n", peer.RemoteAddr(), dump.BinlogFilename, dump.BinlogPos)
 	currentIndex := relay.FindIndex(dump.BinlogFilename)
 	if currentIndex < 0 {
@@ -262,55 +262,110 @@ func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error
 		// TODO: return error code
 		return
 	}
+	// TODO: send fake binlog description event and rotate event
 	currentPos := dump.BinlogPos
-	var n int64
+	relayIndex, relayPos := relay.CurrentPosition()
+	peer.seq = cmdPacket.PacketSeq + 1
+	// TODO: check for last pos
+
 	var delayer util.AutoDelayer
+	var file *os.File
 	for {
-		// ONE BY ONE event prepend with \x00
-
-		// TODO: add/remove checksum
-		// TODO: concurrent read/write
-
-		// TODO: keep file openning when file not changed
-		relayIndex, relayPos := relay.CurrentPosition()
-		for currentIndex == relayIndex && currentPos == relayPos {
-			delayer.Delay()
+		binlog := relay.BinlogInfoByIndex(currentIndex)
+		if file != nil {
+			fmt.Printf("peer %s: close %s\n", peer.RemoteAddr(), file.Name())
+			file.Close()
 		}
-		fmt.Printf("cur: %d, relay: %d\n", currentPos, relayPos)
-		for currentIndex <= relayIndex && currentPos < relayPos {
-			copied := func() int64 {
-				// TODO: optimize file open
-				currentFile := relay.PathByIndex(currentIndex)
-				fmt.Printf("peer %s: open %s\n", peer.RemoteAddr(), currentFile)
-				f, err := os.Open(currentFile)
-				if err != nil {
-					return 0
-				}
-				defer f.Close()
-				_, err = f.Seek(int64(currentPos), 0)
-				fmt.Printf("peer %s: seek to %d\n", peer.RemoteAddr(), currentPos)
-				if err != nil {
-					// position not exists
-					return 0
-				}
-				n, err = io.Copy(peer.Conn, f)
-				fmt.Printf("peer %s: %d bytes copied\n", peer.RemoteAddr(), n)
-				return n
-
-			}()
-
+		currentFilePath := relay.NameToPath(binlog.Name)
+		fmt.Printf("peer %s: open %s\n", peer.RemoteAddr(), currentFilePath)
+		file, err = os.Open(currentFilePath)
+		if err != nil {
+			return err
+		}
+		peer.sendFakeRotateEvent(relay.NameByIndex(currentIndex), uint64(currentPos))
+		endPos := binlog.Size
+		for {
+			err = peer.sendBinlog(file, currentPos, endPos)
 			if err != nil {
 				return
 			}
-			if copied <= 0 {
-				delayer.Delay()
-				break
-			}
-			currentPos += uint32(copied)
+			currentPos = relayPos
 			if currentIndex < relayIndex {
-				currentPos = 4
-				currentIndex++
+				break // not last file
 			}
+			relayIndex, relayPos = relay.CurrentPosition()
+			for currentIndex == relayIndex && currentPos >= relayPos {
+				delayer.Delay()
+				relayIndex, relayPos = relay.CurrentPosition()
+			}
+			if currentIndex == relayIndex { // last file
+				endPos = relayPos
+			} else { // already rotated
+				binlog = relay.BinlogInfoByIndex(currentIndex)
+				endPos = binlog.Size
+			}
+		}
+		currentPos = 4
+		currentIndex++
+	}
+	return
+}
+
+func (peer *Peer) sendFakeRotateEvent(name string, position uint64) (err error) {
+	fakeRotateEvent := mysql.RotateEvent{Name: name, Position: position}
+	packet := fakeRotateEvent.BuildFakePacket(peer.Server.Server.ServerId)
+	fmt.Println(packet.String())
+	packet.PacketSeq = peer.seq
+	peer.seq++
+	err = mysql.WritePacketTo(&packet, peer.Conn, peer.Buffer[:])
+	if err != nil {
+		fmt.Println(err.Error())
+	}
+	return
+}
+func (peer *Peer) sendBinlog(file *os.File, from uint32, to uint32) (err error) {
+	fmt.Printf("peer %s: send %d:%d\n", peer.RemoteAddr(), from, to)
+	file.Seek(int64(from), 0)
+	//var buffer [8192]byte
+	var event mysql.BinlogEventPacket
+	var n int64
+	pos := from
+	peer.Buffer[0] = '\x00'
+	for {
+		_, err = file.Read(peer.Buffer[1:mysql.BinlogEventHeaderSize])
+		if err != nil {
+			fmt.Println(err.Error())
+			return
+		}
+		event.FromBuffer(peer.Buffer[:])
+		event.PacketLength = event.EventSize + 1 //
+		event.PacketSeq = peer.seq
+		peer.seq++
+		fmt.Println("event: " + event.String())
+		if event.LogPos-event.EventSize != pos {
+			fmt.Println("bad pos")
+			err = fmt.Errorf("bad pos") //mysql.BuildErrPacket(mysql.ER_BINLOG_LOGGING_IMPOSSIBLE, "")
+			// TODO: output mysql error pkt
+			return
+		}
+		err = event.Reset(false)
+		if err != nil {
+			fmt.Println(err.Error())
+			return
+		}
+		reader := event.GetReader(file, peer.Buffer[:mysql.BinlogEventHeaderSize])
+		n, err = io.Copy(peer.Conn, &reader)
+		fmt.Printf("%d bytes sent to peer\n", n)
+		// TODO: validate checksum
+		pos += uint32(n)
+		if err != nil {
+			fmt.Println(err.Error())
+		}
+		if n == 0 {
+			return
+		}
+		if pos >= to {
+			return
 		}
 
 	}

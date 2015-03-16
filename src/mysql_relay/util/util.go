@@ -1,9 +1,12 @@
 package util
 
 import (
+	//"bufio"
 	"fmt"
+	//"io"
 	"os"
 	"time"
+	//"unsafe"
 )
 
 type AutoDelayer struct {
@@ -125,3 +128,19 @@ func (self *Logger) Fatal(messageFormat string, messageArgs ...interface{}) {
 func (self *Logger) Error(messageFormat string, messageArgs ...interface{}) {
 	self.Log("ERR", messageFormat, messageArgs...)
 }
+
+// func BufReader(reader io.Reader, buf []byte) bufio.Reader {
+// 	var ret bufio.Reader
+// 	p := (*[]byte)(unsafe.Pointer(&ret))
+// 	*p = buf
+// 	ret.Reset(reader)
+// 	return ret
+// }
+//
+// func BufWriter(writer io.Writer, buf []byte) bufio.Writer {
+// 	var ret bufio.Writer
+// 	p := (*[]byte)(unsafe.Pointer(&ret))
+// 	*p = buf
+// 	ret.Reset(writer)
+// 	return ret
+// }

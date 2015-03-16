@@ -1,6 +1,7 @@
 package mysql
 
 import (
+	//	"bufio"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -109,6 +110,28 @@ func ReadPacket(header PacketHeader, reader io.Reader, buffer []byte) (err error
 	}
 	return
 }
+
+// func (self *PacketHeader) ReadFrom(reader *bufio.Reader) (n int, err error) {
+// 	var t uint32
+// 	err = binary.Read(reader, ENDIAN, &t)
+// 	if err != nil {
+// 		return
+// 	}
+// 	self.FromUint32(t)
+// 	n = 4
+// 	return
+// }
+//
+// func (self *PacketHeader) WriteTo(writer *bufio.Writer) (n int, err error) {
+// 	var t uint32
+// 	t = self.ToUint32()
+// 	err = binary.Write(writer, ENDIAN, &t)
+// 	if err != nil {
+// 		return
+// 	}
+// 	n = 4
+// 	return
+// }
 
 func ReadPacketHeader(reader io.Reader) (header PacketHeader, err error) {
 	var t uint32
@@ -381,9 +404,10 @@ func (self *PayloadPacket) GetReader(reader io.Reader, buffer []byte) PayloadRea
 
 func (self *PayloadReader) Read(buffer []byte) (n int, err error) {
 	if self.header.Pos >= int(self.header.PacketLength) {
+		fmt.Printf("pr: eof! pos %d >= packetLength %d\n", self.header.Pos, self.header.PacketLength)
 		return 0, io.EOF
 	}
-	//fmt.Printf("packet: size: %d pos: %d\n", self.header.PacketLength, self.header.Pos)
+	fmt.Printf("pr: packet: size: %d pos: %d\n", self.header.PacketLength, self.header.Pos)
 	var copied int
 	var srcEnd int
 	var destEnd int
@@ -397,7 +421,7 @@ func (self *PayloadReader) Read(buffer []byte) (n int, err error) {
 			copied = copy(buffer[destEnd:], self.firstBuffer[self.header.Pos:srcEnd])
 			self.header.Pos += copied
 			destEnd += copied
-			//fmt.Printf("%d bytes copied from first buffer!\n", copied)
+			fmt.Printf("pr: %d bytes copied from first buffer!\n", copied)
 		} else {
 			// read data
 			srcRem := int(self.header.PacketLength) - self.header.Pos
@@ -406,10 +430,10 @@ func (self *PayloadReader) Read(buffer []byte) (n int, err error) {
 			if srcRem > destRem {
 				rem = destRem
 			}
-			//fmt.Printf("%d bytes remain to read from socket!\n", rem)
+			fmt.Printf("pr: %d bytes remain to read from socket!\n", rem)
 			// directly read data to dest buffer
 			copied, err = self.reader.Read(buffer[destEnd : destEnd+rem])
-			//fmt.Printf("%d bytes read from socket!\n", copied)
+			fmt.Printf("pr: %d bytes read from socket!\n", copied)
 			if err != nil {
 				return destEnd, err
 			}
@@ -418,6 +442,7 @@ func (self *PayloadReader) Read(buffer []byte) (n int, err error) {
 		}
 		if self.header.Pos >= int(self.header.PacketLength) {
 			// reach the end
+			fmt.Printf("pr: eof!\n")
 			return destEnd, io.EOF
 		}
 	}

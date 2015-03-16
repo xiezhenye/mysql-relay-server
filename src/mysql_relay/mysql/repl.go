@@ -119,6 +119,8 @@ func NextBinlogName(name string) (next string, err error) {
 	return
 }
 
+const BinlogEventHeaderSize = 19
+
 func (self *BinlogEventPacket) FromBuffer(buffer []byte) (read int, err error) {
 	self.Timestamp = ENDIAN.Uint32(buffer[1:])
 	self.EventType = buffer[5]
@@ -126,8 +128,20 @@ func (self *BinlogEventPacket) FromBuffer(buffer []byte) (read int, err error) {
 	self.EventSize = ENDIAN.Uint32(buffer[10:])
 	self.LogPos = ENDIAN.Uint32(buffer[14:])
 	self.Flags = ENDIAN.Uint16(buffer[18:])
-	self.BodyLength = int(self.PacketLength) - 20
-	read = 20
+	self.BodyLength = int(self.PacketLength) - BinlogEventHeaderSize - 1
+	read = BinlogEventHeaderSize + 1
+	return
+}
+
+func (self *BinlogEventPacket) ToBuffer(buffer []byte) (writen int, err error) {
+	buffer[0] = '\x00'
+	ENDIAN.PutUint32(buffer[1:], self.Timestamp)
+	buffer[5] = self.EventType
+	ENDIAN.PutUint32(buffer[6:], self.ServerId)
+	ENDIAN.PutUint32(buffer[10:], self.EventSize)
+	ENDIAN.PutUint32(buffer[14:], self.LogPos)
+	ENDIAN.PutUint16(buffer[18:], self.Flags)
+	writen = BinlogEventHeaderSize + 1
 	return
 }
 
@@ -145,8 +159,15 @@ type FormatDescriptionEvent struct {
 }
 
 type RotateEvent struct {
+	//BinlogEventPacket
+
 	Name     string
 	Position uint64
+}
+
+type RotateEventPacket struct {
+	BinlogEventPacket
+	RotateEvent
 }
 
 func (self *RotateEvent) Parse(packet *BinlogEventPacket, buffer []byte) (err error) {
@@ -161,6 +182,37 @@ func (self *RotateEvent) Parse(packet *BinlogEventPacket, buffer []byte) (err er
 		end -= 4
 	}
 	self.Name = string((buffer[p+8 : end]))
+	return
+}
+
+func (self *RotateEvent) BuildFakePacket(serverId uint32) RotateEventPacket {
+	var ret RotateEventPacket
+	ret.LogPos = 0
+	ret.ServerId = serverId
+	ret.EventSize = uint32(len(self.Name)+8) + BinlogEventHeaderSize
+	ret.EventType = ROTATE_EVENT
+	ret.HasChecksum = false
+	ret.Flags = LOG_EVENT_ARTIFICIAL_F
+	//ret.PacketHeader.PacketLength = ret.EventSize + 1
+	//ret.PacketHeader.PacketSeq = 1
+	ret.RotateEvent = *self
+	return ret
+}
+
+func (self *RotateEventPacket) ToBuffer(buffer []byte) (writen int, err error) {
+	n := 0
+	n, err = self.BinlogEventPacket.ToBuffer(buffer)
+	if err != nil {
+		return
+	}
+	writen, err = self.RotateEvent.ToBuffer(buffer[n:])
+	writen += n
+	return
+}
+
+func (self *RotateEvent) ToBuffer(buffer []byte) (writen int, err error) {
+	ENDIAN.PutUint64(buffer, self.Position)
+	writen = copy(buffer[8:], []byte(self.Name)) + 8
 	return
 }
 
