@@ -332,19 +332,21 @@ func (peer *Peer) sendBinlog(file *os.File, from uint32, to uint32) (err error) 
 	pos := from
 	peer.Buffer[0] = '\x00'
 	for {
-		_, err = file.Read(peer.Buffer[1:mysql.BinlogEventHeaderSize])
+		p, _ := file.Seek(0, os.SEEK_CUR)
+		fmt.Printf("ftell.before: %d\n", p)
+		_, err = file.Read(peer.Buffer[1 : mysql.BinlogEventHeaderSize+1])
 		if err != nil {
 			fmt.Println(err.Error())
 			return
 		}
+
 		event.FromBuffer(peer.Buffer[:])
 		event.PacketLength = event.EventSize + 1 //
 		event.PacketSeq = peer.seq
 		peer.seq++
 		fmt.Println("event: " + event.String())
 		if event.LogPos-event.EventSize != pos {
-			fmt.Println("bad pos")
-			err = fmt.Errorf("bad pos") //mysql.BuildErrPacket(mysql.ER_BINLOG_LOGGING_IMPOSSIBLE, "")
+			err = fmt.Errorf("bad pos: pos: %d, LogPos: %d, EventSize: %d", pos, event.LogPos, event.EventSize) //mysql.BuildErrPacket(mysql.ER_BINLOG_LOGGING_IMPOSSIBLE, "")
 			// TODO: output mysql error pkt
 			return
 		}
@@ -353,11 +355,17 @@ func (peer *Peer) sendBinlog(file *os.File, from uint32, to uint32) (err error) 
 			fmt.Println(err.Error())
 			return
 		}
-		reader := event.GetReader(file, peer.Buffer[:mysql.BinlogEventHeaderSize])
+
+		reader := event.GetReader(file, peer.Buffer[:mysql.BinlogEventHeaderSize+1])
+		reader.WithProtocolHeader = true
 		n, err = io.Copy(peer.Conn, &reader)
 		fmt.Printf("%d bytes sent to peer\n", n)
+
+		p, _ = file.Seek(0, os.SEEK_CUR)
+		fmt.Printf("ftell.after: %d\n", p)
+
 		// TODO: validate checksum
-		pos += uint32(n)
+		pos += uint32(n - 5)
 		if err != nil {
 			fmt.Println(err.Error())
 		}

@@ -377,9 +377,10 @@ func (self *OkPacket) ToBuffer(buffer []byte) (writen int, err error) {
 }
 
 type PayloadReader struct {
-	reader      io.Reader
-	header      *PayloadPacket
-	firstBuffer []byte
+	reader             io.Reader
+	header             *PayloadPacket
+	WithProtocolHeader bool
+	firstBuffer        []byte
 }
 
 func (self *PayloadPacket) Reset(skipHeader bool) error {
@@ -396,9 +397,10 @@ func (self *PayloadPacket) Reset(skipHeader bool) error {
 
 func (self *PayloadPacket) GetReader(reader io.Reader, buffer []byte) PayloadReader {
 	return PayloadReader{
-		reader:      reader,
-		header:      self,
-		firstBuffer: buffer,
+		reader:             reader,
+		header:             self,
+		firstBuffer:        buffer,
+		WithProtocolHeader: false,
 	}
 }
 
@@ -411,6 +413,11 @@ func (self *PayloadReader) Read(buffer []byte) (n int, err error) {
 	var copied int
 	var srcEnd int
 	var destEnd int
+	if self.WithProtocolHeader {
+		fmt.Printf("pr: put protocol header!\n")
+		ENDIAN.PutUint32(buffer[destEnd:], self.header.ToUint32())
+		destEnd += 4
+	}
 	for destEnd < len(buffer) {
 		if self.header.Pos < len(self.firstBuffer) {
 			// has remained src buffer

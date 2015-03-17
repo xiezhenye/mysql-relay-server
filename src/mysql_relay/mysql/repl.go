@@ -3,6 +3,7 @@ package mysql
 import (
 	"errors"
 	"fmt"
+	"hash/crc32"
 	"io"
 	"strconv"
 	"strings"
@@ -191,8 +192,11 @@ func (self *RotateEvent) BuildFakePacket(serverId uint32) RotateEventPacket {
 	ret.ServerId = serverId
 	ret.EventSize = uint32(len(self.Name)+8) + BinlogEventHeaderSize
 	ret.EventType = ROTATE_EVENT
-	ret.HasChecksum = false
+	ret.HasChecksum = true
 	ret.Flags = LOG_EVENT_ARTIFICIAL_F
+	if ret.HasChecksum {
+		ret.EventSize += 4
+	}
 	//ret.PacketHeader.PacketLength = ret.EventSize + 1
 	//ret.PacketHeader.PacketSeq = 1
 	ret.RotateEvent = *self
@@ -207,6 +211,13 @@ func (self *RotateEventPacket) ToBuffer(buffer []byte) (writen int, err error) {
 	}
 	writen, err = self.RotateEvent.ToBuffer(buffer[n:])
 	writen += n
+	if self.HasChecksum {
+		checksum := crc32.ChecksumIEEE(buffer[1:writen])
+		fmt.Printf("crc32 of %v == %08x\n", buffer[1:writen], checksum)
+		ENDIAN.PutUint32(buffer[writen:], checksum)
+		writen += 4
+	}
+	fmt.Printf("rotate event packet: %dbytes\n", writen)
 	return
 }
 
