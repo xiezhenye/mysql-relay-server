@@ -116,12 +116,13 @@ func (self *BinlogRelay) appendEvent(size uint32) {
 	self.lock.Lock()
 	defer self.lock.Unlock()
 	self.fileIndex[self.curFileId].Append(size)
+	self.logger.Info("append: %d: %v", self.curFileId, self.fileIndex[self.curFileId])
 }
 
 func (self *BinlogRelay) CurrentPosition() (index int, pos uint32) {
 	self.lock.RLock()
 	defer self.lock.RUnlock()
-	return self.curFileId, self.fileIndex[index].Size
+	return self.curFileId, self.fileIndex[self.curFileId].Size
 }
 
 func (self *BinlogRelay) FindIndex(name string) int {
@@ -156,6 +157,7 @@ func (self *BinlogRelay) NameToPath(name string) string {
 }
 
 func (self *BinlogRelay) writeBinlog(bufChanIn chan<- []byte, bufChanOut <-chan writeTask) (err error) {
+	self.logger.Info("writer begin")
 	name := ""
 	seq := byte(0)
 	var f *os.File
@@ -169,6 +171,7 @@ func (self *BinlogRelay) writeBinlog(bufChanIn chan<- []byte, bufChanOut <-chan 
 	ib := 0
 	eventSize := uint32(0)
 	for task := range bufChanOut {
+		//self.logger.Info("got task %s:%d", task.name, task.pos)
 		if task.name != name {
 			self.logger.Info("writer rotated to " + task.name)
 			// file rotated!
@@ -176,7 +179,7 @@ func (self *BinlogRelay) writeBinlog(bufChanIn chan<- []byte, bufChanOut <-chan 
 				f.Close()
 			}
 			path := self.NameToPath(task.name)
-			self.logger.Info(fmt.Sprintf("write at %s:%d", path, task.pos))
+			//self.logger.Info("write at %s:%d", path, task.pos)
 			if task.pos <= mysql.LOG_POS_START {
 				f, err = os.Create(path)
 				if err != nil {
@@ -194,16 +197,19 @@ func (self *BinlogRelay) writeBinlog(bufChanIn chan<- []byte, bufChanOut <-chan 
 			}
 			name = task.name
 		}
+		//self.logger.Info("write at %d", task.pos)
 		_, err = f.WriteAt(task.buffer[:task.size], task.pos)
 		if err != nil {
 			return
 		}
 		eventSize += task.size
 		if seq != task.seq { // next event
+			//self.logger.Info("append event %d", task.seq)
 			self.appendEvent(eventSize)
 			seq = task.seq
 			ib++
 			if ib >= self.syncBinlog {
+				//self.logger.Info("sync file")
 				ib = 0
 				f.Sync()
 			}

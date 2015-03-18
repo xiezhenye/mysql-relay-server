@@ -2,6 +2,7 @@ package server
 
 import (
 	"fmt"
+	//	"hash/crc32"
 	"io"
 	"io/ioutil"
 	"mysql_relay/mysql"
@@ -282,30 +283,40 @@ func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error
 		if err != nil {
 			return err
 		}
+		fmt.Printf("peer %s: send fake RotateEvent\n", peer.RemoteAddr())
 		peer.sendFakeRotateEvent(relay.NameByIndex(currentIndex), uint64(currentPos))
 		endPos := binlog.Size
+		if currentPos > mysql.LOG_POS_START {
+			fmt.Printf("peer %s: send fake FormatDescriptionEvent\n", peer.RemoteAddr())
+			err = peer.sendFakeFormatDescriptionEvent(file)
+			if err != nil {
+				fmt.Printf("peer %s err: %s\n", peer.RemoteAddr(), err.Error())
+				return
+			}
+		}
 		for {
 			err = peer.sendBinlog(file, currentPos, endPos)
 			if err != nil {
 				return
 			}
-			currentPos = relayPos
 			if currentIndex < relayIndex {
 				break // not last file
 			}
+			currentPos = endPos
+
 			relayIndex, relayPos = relay.CurrentPosition()
 			for currentIndex == relayIndex && currentPos >= relayPos {
+				//fmt.Printf("Waiting for update (%d, %d)!\n", relayIndex, relayPos)
 				delayer.Delay()
 				relayIndex, relayPos = relay.CurrentPosition()
 			}
-			if currentIndex == relayIndex { // last file
-				endPos = relayPos
-			} else { // already rotated
-				binlog = relay.BinlogInfoByIndex(currentIndex)
-				endPos = binlog.Size
+			currentSize := relay.BinlogInfoByIndex(currentIndex).Size
+			if currentIndex != relayIndex && endPos == currentSize {
+				break
 			}
+			endPos = currentSize
 		}
-		currentPos = 4
+		currentPos = mysql.LOG_POS_START
 		currentIndex++
 	}
 	return
@@ -318,31 +329,78 @@ func (peer *Peer) sendFakeRotateEvent(name string, position uint64) (err error) 
 	packet.PacketSeq = peer.seq
 	peer.seq++
 	err = mysql.WritePacketTo(&packet, peer.Conn, peer.Buffer[:])
-	if err != nil {
-		fmt.Println(err.Error())
-	}
 	return
 }
+
+func (peer *Peer) sendFakeFormatDescriptionEvent(file *os.File) (err error) {
+	file.Seek(mysql.LOG_POS_START, 0)
+	peer.Buffer[4] = '\x00'
+	_, err = file.Read(peer.Buffer[5 : mysql.BinlogEventHeaderSize+5])
+	if err != nil {
+		fmt.Printf("read fde failed: %s\n", err.Error())
+		return
+	}
+	var event mysql.BinlogEventPacket
+	event.FromBuffer(peer.Buffer[4:])
+
+	if event.EventType != mysql.FORMAT_DESCRIPTION_EVENT {
+		err = fmt.Errorf("Not a FORMAT_DESCRIPTION_EVENT")
+		return
+	}
+
+	fmt.Println("fde read: " + event.String())
+	_, err = file.Read(peer.Buffer[mysql.BinlogEventHeaderSize+5 : event.EventSize+5])
+	if err != nil {
+		return
+	}
+	fmt.Printf("buffer: %v\n", peer.Buffer[:event.EventSize+5])
+	event.PacketHeader = mysql.PacketHeader{PacketLength: event.EventSize + 1, PacketSeq: peer.seq}
+	event.BodyLength = int(event.EventSize + 1 - mysql.BinlogEventHeaderSize)
+	event.LogPos = 0
+	event.ToBuffer(peer.Buffer[4:])
+	mysql.ENDIAN.PutUint32(peer.Buffer[:], event.PacketHeader.ToUint32())
+	/*
+		var fde mysql.FormatDescriptionEvent
+		err = fde.Parse(&event, peer.Buffer[5:])
+		if err != nil {
+			fmt.Println("parse fde failed! %s\n", err.Error())
+			return
+		}
+		fmt.Printf("FDE: %v\n", fde)
+
+		if fde.ChecksumAlgorism == 1 {
+			//rewrite checksum!
+			checksum := crc32.ChecksumIEEE(peer.Buffer[5 : event.EventSize+1])
+			fmt.Printf("fake fde: rewrite checksum of %v == %08x\n", peer.Buffer[5:event.EventSize+1], checksum)
+			mysql.ENDIAN.PutUint32(peer.Buffer[event.EventSize+5:], checksum)
+		}
+	*/
+	fmt.Printf("fde packet: %v!!!!!!!\n", peer.Buffer[:event.PacketLength+4])
+	peer.Conn.Write(peer.Buffer[:event.PacketLength+4])
+	peer.seq++
+	return
+}
+
 func (peer *Peer) sendBinlog(file *os.File, from uint32, to uint32) (err error) {
 	fmt.Printf("peer %s: send %d:%d\n", peer.RemoteAddr(), from, to)
+	if from >= to {
+		return
+	}
 	file.Seek(int64(from), 0)
-	//var buffer [8192]byte
-	var event mysql.BinlogEventPacket
 	var n int64
 	pos := from
 	peer.Buffer[0] = '\x00'
 	for {
-		p, _ := file.Seek(0, os.SEEK_CUR)
-		fmt.Printf("ftell.before: %d\n", p)
 		_, err = file.Read(peer.Buffer[1 : mysql.BinlogEventHeaderSize+1])
 		if err != nil {
 			fmt.Println(err.Error())
 			return
 		}
-
+		var event mysql.BinlogEventPacket
 		event.FromBuffer(peer.Buffer[:])
 		event.PacketLength = event.EventSize + 1 //
 		event.PacketSeq = peer.seq
+
 		peer.seq++
 		fmt.Println("event: " + event.String())
 		if event.LogPos-event.EventSize != pos {
@@ -352,17 +410,14 @@ func (peer *Peer) sendBinlog(file *os.File, from uint32, to uint32) (err error) 
 		}
 		err = event.Reset(false)
 		if err != nil {
-			fmt.Println(err.Error())
+			//fmt.Println("reset error: " + err.Error())
 			return
 		}
 
 		reader := event.GetReader(file, peer.Buffer[:mysql.BinlogEventHeaderSize+1])
 		reader.WithProtocolHeader = true
 		n, err = io.Copy(peer.Conn, &reader)
-		fmt.Printf("%d bytes sent to peer\n", n)
-
-		p, _ = file.Seek(0, os.SEEK_CUR)
-		fmt.Printf("ftell.after: %d\n", p)
+		//fmt.Printf("%d bytes sent to peer\n", n)
 
 		// TODO: validate checksum
 		pos += uint32(n - 5)

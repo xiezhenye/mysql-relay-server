@@ -385,6 +385,8 @@ type PayloadReader struct {
 
 func (self *PayloadPacket) Reset(skipHeader bool) error {
 	if self.Pos > int(self.PacketLength-1) {
+		// TODO: packetLength? header length?
+		//fmt.Printf("SEEK_AFTER_READ: %d > %d\n", self.Pos, self.PacketLength-1)
 		return SEEK_AFTER_READ
 	}
 	if skipHeader {
@@ -406,15 +408,15 @@ func (self *PayloadPacket) GetReader(reader io.Reader, buffer []byte) PayloadRea
 
 func (self *PayloadReader) Read(buffer []byte) (n int, err error) {
 	if self.header.Pos >= int(self.header.PacketLength) {
-		fmt.Printf("pr: eof! pos %d >= packetLength %d\n", self.header.Pos, self.header.PacketLength)
+		//fmt.Printf("pr: eof! pos %d >= packetLength %d\n", self.header.Pos, self.header.PacketLength)
 		return 0, io.EOF
 	}
-	fmt.Printf("pr: packet: size: %d pos: %d\n", self.header.PacketLength, self.header.Pos)
+	//fmt.Printf("pr: packet: size: %d pos: %d\n", self.header.PacketLength, self.header.Pos)
 	var copied int
 	var srcEnd int
 	var destEnd int
 	if self.WithProtocolHeader {
-		fmt.Printf("pr: put protocol header!\n")
+		//fmt.Printf("pr: put protocol header!\n")
 		ENDIAN.PutUint32(buffer[destEnd:], self.header.ToUint32())
 		destEnd += 4
 	}
@@ -428,7 +430,7 @@ func (self *PayloadReader) Read(buffer []byte) (n int, err error) {
 			copied = copy(buffer[destEnd:], self.firstBuffer[self.header.Pos:srcEnd])
 			self.header.Pos += copied
 			destEnd += copied
-			fmt.Printf("pr: %d bytes copied from first buffer!\n", copied)
+			//fmt.Printf("pr: %d bytes copied from first buffer!\n", copied)
 		} else {
 			// read data
 			srcRem := int(self.header.PacketLength) - self.header.Pos
@@ -437,10 +439,10 @@ func (self *PayloadReader) Read(buffer []byte) (n int, err error) {
 			if srcRem > destRem {
 				rem = destRem
 			}
-			fmt.Printf("pr: %d bytes remain to read from socket!\n", rem)
+			//fmt.Printf("pr: %d bytes remain to read from socket!\n", rem)
 			// directly read data to dest buffer
 			copied, err = self.reader.Read(buffer[destEnd : destEnd+rem])
-			fmt.Printf("pr: %d bytes read from socket!\n", copied)
+			//fmt.Printf("pr: %d bytes read from socket!\n", copied)
 			if err != nil {
 				return destEnd, err
 			}
@@ -449,7 +451,7 @@ func (self *PayloadReader) Read(buffer []byte) (n int, err error) {
 		}
 		if self.header.Pos >= int(self.header.PacketLength) {
 			// reach the end
-			fmt.Printf("pr: eof!\n")
+			//fmt.Printf("pr: eof!\n")
 			return destEnd, io.EOF
 		}
 	}
