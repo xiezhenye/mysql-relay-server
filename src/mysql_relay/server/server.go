@@ -2,7 +2,7 @@ package server
 
 import (
 	"fmt"
-	//	"hash/crc32"
+	"hash/crc32"
 	"io"
 	"io/ioutil"
 	"mysql_relay/mysql"
@@ -325,7 +325,7 @@ func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error
 func (peer *Peer) sendFakeRotateEvent(name string, position uint64) (err error) {
 	fakeRotateEvent := mysql.RotateEvent{Name: name, Position: position}
 	packet := fakeRotateEvent.BuildFakePacket(peer.Server.Server.ServerId)
-	fmt.Println(packet.String())
+	fmt.Println("fake rotate event: " + packet.String())
 	packet.PacketSeq = peer.seq
 	peer.seq++
 	err = mysql.WritePacketTo(&packet, peer.Conn, peer.Buffer[:])
@@ -353,28 +353,28 @@ func (peer *Peer) sendFakeFormatDescriptionEvent(file *os.File) (err error) {
 	if err != nil {
 		return
 	}
-	fmt.Printf("buffer: %v\n", peer.Buffer[:event.EventSize+5])
+	//fmt.Printf("buffer: %v\n", peer.Buffer[:event.EventSize+5])
 	event.PacketHeader = mysql.PacketHeader{PacketLength: event.EventSize + 1, PacketSeq: peer.seq}
 	event.BodyLength = int(event.EventSize + 1 - mysql.BinlogEventHeaderSize)
 	event.LogPos = 0
 	event.ToBuffer(peer.Buffer[4:])
 	mysql.ENDIAN.PutUint32(peer.Buffer[:], event.PacketHeader.ToUint32())
-	/*
-		var fde mysql.FormatDescriptionEvent
-		err = fde.Parse(&event, peer.Buffer[5:])
-		if err != nil {
-			fmt.Println("parse fde failed! %s\n", err.Error())
-			return
-		}
-		fmt.Printf("FDE: %v\n", fde)
 
-		if fde.ChecksumAlgorism == 1 {
-			//rewrite checksum!
-			checksum := crc32.ChecksumIEEE(peer.Buffer[5 : event.EventSize+1])
-			fmt.Printf("fake fde: rewrite checksum of %v == %08x\n", peer.Buffer[5:event.EventSize+1], checksum)
-			mysql.ENDIAN.PutUint32(peer.Buffer[event.EventSize+5:], checksum)
-		}
-	*/
+	var fde mysql.FormatDescriptionEvent
+	err = fde.Parse(&event, peer.Buffer[5:])
+	if err != nil {
+		fmt.Println("parse fde failed! %s\n", err.Error())
+		return
+	}
+	fmt.Printf("FDE: %v\n", fde)
+
+	if fde.ChecksumAlgorism == 1 {
+		//rewrite checksum!
+		checksum := crc32.ChecksumIEEE(peer.Buffer[5 : event.EventSize+1])
+		fmt.Printf("fake fde: rewrite checksum of %v == %08x\n", peer.Buffer[5:event.EventSize+1], checksum)
+		mysql.ENDIAN.PutUint32(peer.Buffer[event.EventSize+1:], checksum)
+	}
+
 	fmt.Printf("fde packet: %v!!!!!!!\n", peer.Buffer[:event.PacketLength+4])
 	peer.Conn.Write(peer.Buffer[:event.PacketLength+4])
 	peer.seq++
