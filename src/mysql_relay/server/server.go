@@ -420,7 +420,7 @@ func (peer *Peer) sendBinlog(file *os.File, from uint32, to uint32) (err error) 
 		//fmt.Printf("%d bytes sent to peer\n", n)
 
 		// TODO: validate checksum
-		pos += uint32(n - 5)
+		pos += uint32(event.EventSize) // n-5
 		if err != nil {
 			fmt.Println(err.Error())
 		}

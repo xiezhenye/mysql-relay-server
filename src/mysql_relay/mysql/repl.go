@@ -160,10 +160,17 @@ type FormatDescriptionEvent struct {
 }
 
 type RotateEvent struct {
-	//BinlogEventPacket
-
 	Name     string
 	Position uint64
+}
+
+type QueryEvent struct {
+	SlaveProxyId  uint32
+	ExecutionTime uint32
+	Schema        string
+	ErrorCode     uint16
+	StatusVars    string
+	Query         string
 }
 
 type RotateEventPacket struct {
@@ -254,6 +261,36 @@ func (self *FormatDescriptionEvent) Parse(packet *BinlogEventPacket, buffer []by
 		p = int(packet.PacketLength) - packet.BodyLength + formatDescriptionEventSize
 		self.ChecksumAlgorism = buffer[p]
 	}
+	return
+}
+
+func (self *QueryEvent) Parse(packet *BinlogEventPacket, buffer []byte) (err error) {
+	if packet.EventType != QUERY_EVENT {
+		err = NOT_SUCH_EVENT
+		return
+	}
+	p := int(packet.PacketLength) - packet.BodyLength
+	self.SlaveProxyId = ENDIAN.Uint32(buffer[p:])
+	p += 4
+	self.ExecutionTime = ENDIAN.Uint32(buffer[p:])
+	p += 4
+	schemaLength := buffer[p]
+	p += 1
+	self.ErrorCode = ENDIAN.Uint16(buffer[p:])
+	p += 2
+	statusVarLength := ENDIAN.Uint16(buffer[p:])
+	p += 2
+	self.StatusVars = string(buffer[p : p+int(statusVarLength)])
+	p += int(statusVarLength)
+	self.Schema = string(buffer[p : p+int(schemaLength)])
+	p += int(schemaLength)
+	p += 1 // 00
+
+	end := packet.PacketLength
+	if packet.HasChecksum {
+		end -= 4
+	}
+	self.Query = string((buffer[p:end]))
 	return
 }
 

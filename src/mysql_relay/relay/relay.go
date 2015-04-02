@@ -122,7 +122,7 @@ func (self *BinlogRelay) appendEvent(size uint32) {
 func (self *BinlogRelay) CurrentPosition() (index int, pos uint32) {
 	self.lock.RLock()
 	defer self.lock.RUnlock()
-	return self.curFileId, self.fileIndex[self.curFileId].Size
+	return self.curFileId, self.fileIndex[index].Size
 }
 
 func (self *BinlogRelay) FindIndex(name string) int {
