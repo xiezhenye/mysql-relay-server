@@ -40,7 +40,7 @@ type BinlogRelay struct {
 	lock sync.RWMutex
 
 	client mysql.Client
-	buf    [8192]byte
+	buf    [32768]byte
 
 	fileIndex []BinlogIndexEntry
 	curFileId int
@@ -56,7 +56,7 @@ type writeTask struct {
 	seq    byte
 }
 
-func (self *BinlogRelay) Init(name string, client mysql.Client, localDir string, startFile string) {
+func (self *BinlogRelay) Init(name string, client mysql.Client, localDir string, startFile string) (err error) {
 	self.name = name
 	self.client = client
 	self.localDir = localDir
@@ -65,11 +65,15 @@ func (self *BinlogRelay) Init(name string, client mysql.Client, localDir string,
 	self.syncBinlog = 1
 
 	logPath := localDir + string(os.PathSeparator) + "relay.log"
-	self.logger.ToFile(logPath)
+	err = self.logger.ToFile(logPath)
+	if err != nil {
+		return
+	}
 	self.logger.SetToStderr(true)
 	self.logger.SetPrefix("[upstream:" + name + "]")
 	self.logger.Info("relay inited")
 	self.ReloadPos()
+	return
 }
 
 func (self *BinlogRelay) ReloadPos() error {
@@ -79,6 +83,9 @@ func (self *BinlogRelay) ReloadPos() error {
 		stat, err := os.Stat(self.NameToPath(filename))
 		if os.IsNotExist(err) {
 			break
+		} else if err != nil {
+			self.logger.Error(err.Error())
+			return err
 		}
 		self.startFile = filename
 		self.startPos = uint32(stat.Size())
@@ -129,7 +136,6 @@ func (self *BinlogRelay) FindIndex(name string) int {
 	self.lock.RLock()
 	defer self.lock.RUnlock()
 	for i, index := range self.fileIndex {
-		fmt.Println(index.Name + "=?" + name)
 		if index.Name == name {
 			return i
 		}
@@ -156,6 +162,27 @@ func (self *BinlogRelay) NameToPath(name string) string {
 	return self.localDir + string(os.PathSeparator) + name
 }
 
+func (self *BinlogRelay) getFileToWrite(name string, pos int64) (f *os.File, err error) {
+	path := self.NameToPath(name)
+	//self.logger.Info("write at %s:%d", path, task.pos)
+	if pos <= mysql.LOG_POS_START {
+		f, err = os.Create(path)
+		if err != nil {
+			return
+		}
+		// binlog header
+		_, err = f.Write([]byte{'\xfe', 'b', 'i', 'n'})
+		self.appendIndex(name)
+
+	} else {
+		f, err = os.OpenFile(path, os.O_RDWR, 0664)
+	}
+	if err != nil {
+		return
+	}
+	return
+}
+
 func (self *BinlogRelay) writeBinlog(bufChanIn chan<- []byte, bufChanOut <-chan writeTask) (err error) {
 	self.logger.Info("writer begin")
 	name := ""
@@ -172,26 +199,12 @@ func (self *BinlogRelay) writeBinlog(bufChanIn chan<- []byte, bufChanOut <-chan 
 	eventSize := uint32(0)
 	for task := range bufChanOut {
 		//self.logger.Info("got task %s:%d", task.name, task.pos)
-		if task.name != name {
+		if task.name != name { // file rotated!
 			self.logger.Info("writer rotated to " + task.name)
-			// file rotated!
 			if f != nil {
 				f.Close()
 			}
-			path := self.NameToPath(task.name)
-			//self.logger.Info("write at %s:%d", path, task.pos)
-			if task.pos <= mysql.LOG_POS_START {
-				f, err = os.Create(path)
-				if err != nil {
-					return
-				}
-				// binlog header
-				_, err = f.Write([]byte{'\xfe', 'b', 'i', 'n'})
-				self.appendIndex(task.name)
-
-			} else {
-				f, err = os.OpenFile(path, os.O_RDWR, 0664)
-			}
+			f, err = self.getFileToWrite(task.name, task.pos)
 			if err != nil {
 				return
 			}
@@ -205,19 +218,18 @@ func (self *BinlogRelay) writeBinlog(bufChanIn chan<- []byte, bufChanOut <-chan 
 		eventSize += task.size
 		if seq != task.seq { // next event
 			//self.logger.Info("append event %d", task.seq)
-			self.appendEvent(eventSize)
 			seq = task.seq
 			ib++
 			if ib >= self.syncBinlog {
 				//self.logger.Info("sync file")
-				ib = 0
 				f.Sync()
+				self.appendEvent(eventSize)
+				ib = 0
 			}
 			eventSize = 0
 		}
 		bufChanIn <- task.buffer
 	}
-
 	return
 }
 
@@ -247,11 +259,13 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<- w
 	for event := range stream.GetChan() {
 		event.HasChecksum = hasBinlogChecksum
 		self.logger.Info(fmt.Sprintf("event: { %s }", event.String()))
-		if event.EventType == mysql.FORMAT_DESCRIPTION_EVENT {
+		switch event.EventType {
+		case mysql.FORMAT_DESCRIPTION_EVENT:
 			var formatDescription mysql.FormatDescriptionEvent
 			formatDescription.Parse(&event, self.client.Buffer[:])
 			hasBinlogChecksum = (formatDescription.ChecksumAlgorism == 1)
-		} else if event.EventType == mysql.ROTATE_EVENT {
+
+		case mysql.ROTATE_EVENT:
 			// change to next file!
 			var rotate mysql.RotateEvent
 			err = rotate.Parse(&event, self.client.Buffer[:])
@@ -267,48 +281,41 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<- w
 			return
 		}
 		reader := event.GetReader(self.client.Conn, self.client.Buffer[:])
-
 		if event.IsFake() {
-			// fake event should be ignored!
-			io.Copy(ioutil.Discard, &reader)
-		} else {
-			io.CopyN(ioutil.Discard, &reader, 1) //discard first ok byte
-			n := 0
-			for {
-				buffer := <-bufChanIn
-				n, err = reader.Read(buffer)
-				if n > 0 {
-					self.logger.Info("writeTask: {name:%s, pos:%d, size:%d, bufsize:%d}", filename, curPos, n, len(buffer))
-					bufChanOut <- writeTask{
-						name:   filename,
-						buffer: buffer,
-						size:   uint32(n),
-						seq:    event.PacketSeq,
-						pos:    int64(curPos),
-					}
-					curPos += uint32(n)
+			continue
+		}
+		io.CopyN(ioutil.Discard, &reader, 1) //discard first ok byte
+		n := 0
+		for {
+			buffer := <-bufChanIn
+			n, err = reader.Read(buffer)
+			if n > 0 {
+				self.logger.Info("writeTask: {name:%s, pos:%d, size:%d, bufsize:%d}", filename, curPos, n, len(buffer))
+				bufChanOut <- writeTask{
+					name:   filename,
+					buffer: buffer,
+					size:   uint32(n),
+					seq:    event.PacketSeq,
+					pos:    int64(curPos),
 				}
-				if err != nil {
-					if err == io.EOF {
-						break
-					} else {
-						self.logger.Error(err.Error())
-						return
-					}
+				curPos += uint32(n)
+			}
+			if err != nil {
+				if err == io.EOF {
+					break
+				} else {
+					self.logger.Error(err.Error())
+					return
 				}
 			}
 		}
-		stream.Continue()
 	}
 	err = stream.GetError()
-	if err != nil {
-		return
-	}
 	return
 }
 
 func (self *BinlogRelay) Run() error {
-	nBuffers := 8
+	nBuffers := 4
 	bufChanIn := make(chan []byte, nBuffers)
 	bufChanOut := make(chan writeTask, nBuffers)
 

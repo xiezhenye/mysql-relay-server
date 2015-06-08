@@ -384,7 +384,7 @@ type PayloadReader struct {
 }
 
 func (self *PayloadPacket) Reset(skipHeader bool) error {
-	if self.Pos > int(self.PacketLength-1) {
+	if self.Pos > int(self.PacketLength)-self.BodyLength {
 		// TODO: packetLength? header length?
 		//fmt.Printf("SEEK_AFTER_READ: %d > %d\n", self.Pos, self.PacketLength-1)
 		return SEEK_AFTER_READ

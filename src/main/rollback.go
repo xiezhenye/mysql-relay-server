@@ -9,6 +9,10 @@ import (
 	"os"
 )
 
+const (
+	MAX_EVENT_SIZE = 1048576
+)
+
 func main() {
 	var err error
 	var binlogPath string
@@ -30,7 +34,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, err.Error())
 		return
 	}
-	var txs RowTransactionSet
+	var txs []RowTransaction
 	txs, err = scanTrans(f, uint32(rollbackPos), uint32(stat.Size()))
 	if err != nil {
 		if err != io.EOF {
@@ -98,12 +102,8 @@ type RowTransaction struct {
 	Rows     []EventEntry
 	Xid      EventEntry
 }
-type RowTransactionSet struct {
-	transactions []RowTransaction
-	maxSize      uint32
-}
 
-func scanTrans(file *os.File, from uint32, to uint32) (rtxs RowTransactionSet, err error) {
+func scanTrans(file *os.File, from uint32, to uint32) (rtxs []RowTransaction, err error) {
 	var buffer [8192]byte
 	if from >= to {
 		return
@@ -117,7 +117,7 @@ func scanTrans(file *os.File, from uint32, to uint32) (rtxs RowTransactionSet, e
 	file.Seek(int64(from), 0)
 	//var n int64
 	pos := from
-	rtxs.transactions = make([]RowTransaction, 0, 1000)
+	rtxs = make([]RowTransaction, 0, 1000)
 
 	for {
 		var event mysql.BinlogEventPacket
@@ -158,9 +158,7 @@ func scanTrans(file *os.File, from uint32, to uint32) (rtxs RowTransactionSet, e
 		}
 		tx.Begin = EventEntry{pos: pos, size: event.EventSize}
 		pos += event.EventSize
-		if event.EventSize > rtxs.maxSize {
-			rtxs.maxSize = event.EventSize
-		}
+
 		// TABLE_MAP
 		event, err = readEvent(file, buffer[:])
 		if err != nil {
@@ -179,9 +177,6 @@ func scanTrans(file *os.File, from uint32, to uint32) (rtxs RowTransactionSet, e
 		}
 		tx.TableMap = EventEntry{pos: pos, size: event.EventSize}
 		pos += event.EventSize
-		if event.EventSize > rtxs.maxSize {
-			rtxs.maxSize = event.EventSize
-		}
 
 		// ROW EVENTS
 		for {
@@ -203,9 +198,7 @@ func scanTrans(file *os.File, from uint32, to uint32) (rtxs RowTransactionSet, e
 			}
 			tx.Rows = append(tx.Rows, EventEntry{pos: pos, size: event.EventSize})
 			pos += event.EventSize
-			if event.EventSize > rtxs.maxSize {
-				rtxs.maxSize = event.EventSize
-			}
+
 		}
 
 		// XID EVENT
@@ -220,10 +213,8 @@ func scanTrans(file *os.File, from uint32, to uint32) (rtxs RowTransactionSet, e
 		}
 		tx.Xid = EventEntry{pos: pos, size: event.EventSize}
 		pos += event.EventSize
-		if event.EventSize > rtxs.maxSize {
-			rtxs.maxSize = event.EventSize
-		}
-		rtxs.transactions = append(rtxs.transactions, tx)
+
+		rtxs = append(rtxs, tx)
 		fmt.Println()
 	}
 	return

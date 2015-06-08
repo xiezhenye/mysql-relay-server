@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"io/ioutil"
 	"strconv"
 	"strings"
 )
@@ -64,6 +65,8 @@ const (
 	BINLOG_EVENT_END              = 0x24
 )
 
+const BinlogEventHeaderSize = 19
+
 var EventNames = [...]string{"UNKNOWN_EVENT", "START_EVENT_V3", "QUERY_EVENT",
 	"STOP_EVENT", "ROTATE_EVENT", "INTVAR_EVENT", "LOAD_EVENT", "SLAVE_EVENT",
 	"CREATE_FILE_EVENT", "APPEND_BLOCK_EVENT", "EXEC_LOAD_EVENT",
@@ -120,8 +123,6 @@ func NextBinlogName(name string) (next string, err error) {
 	return
 }
 
-const BinlogEventHeaderSize = 19
-
 func (self *BinlogEventPacket) FromBuffer(buffer []byte) (read int, err error) {
 	self.Timestamp = ENDIAN.Uint32(buffer[1:])
 	self.EventType = buffer[5]
@@ -171,6 +172,20 @@ type QueryEvent struct {
 	ErrorCode     uint16
 	StatusVars    string
 	Query         string
+}
+
+type TableMapColumnEntry struct {
+	Type byte
+	// Meta uint32
+	// Size uint32
+	// Null bool
+}
+type TableMapEvent struct {
+	TableId    uint32
+	Flags      uint16
+	SchemaName string
+	TableName  string
+	Columns    []TableMapColumnEntry
 }
 
 type RotateEventPacket struct {
@@ -294,7 +309,7 @@ func (self *QueryEvent) Parse(packet *BinlogEventPacket, buffer []byte) (err err
 	return
 }
 
-func DumpBinlogTo(cmdBinlogDump ComBinglogDump, readWriter io.ReadWriter, canRead <-chan struct{}, ret chan<- BinlogEventPacket, buffer []byte) (err error) {
+func DumpBinlogTo(cmdBinlogDump ComBinglogDump, readWriter io.ReadWriter, ret chan<- BinlogEventPacket, buffer []byte) (err error) {
 	defer close(ret)
 	cmdPacket := CommandPacket{Command: &cmdBinlogDump}
 	err = WritePacketTo(&cmdPacket, readWriter, buffer)
@@ -334,7 +349,46 @@ func DumpBinlogTo(cmdBinlogDump ComBinglogDump, readWriter io.ReadWriter, canRea
 			return
 		}
 		ret <- event
-		<-canRead
+		reader := event.GetReader(readWriter, buffer)
+		io.Copy(ioutil.Discard, &reader)
 	}
+	return
+}
+
+type BinlogEventStream struct {
+	ret     chan BinlogEventPacket
+	errs    chan error
+	canRead chan struct{}
+}
+
+func (self *BinlogEventStream) GetChan() <-chan BinlogEventPacket {
+	return self.ret
+}
+
+func (self *BinlogEventStream) GetError() error {
+	err, _ := <-self.errs
+	return err
+}
+
+func (self *Client) DumpBinlog(cmdBinlogDump ComBinglogDump) (ret BinlogEventStream) {
+	var err error
+	_, err = self.Command(&QueryCommand{Query: "SET @master_binlog_checksum='NONE';"})
+	if err != nil {
+		ret.errs <- err
+		close(ret.errs)
+		close(ret.canRead)
+		return
+	}
+	ret.ret = make(chan BinlogEventPacket)
+	ret.errs = make(chan error)
+	//ret.canRead = make(chan struct{})
+	go func() {
+		err := DumpBinlogTo(cmdBinlogDump, self.Conn, ret.ret, self.Buffer[:])
+		if err != nil {
+			ret.errs <- err
+		}
+		close(ret.errs)
+		close(ret.canRead)
+	}()
 	return
 }
