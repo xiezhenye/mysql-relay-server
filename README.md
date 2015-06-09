@@ -5,8 +5,9 @@ mysql-relay-server
 
 
 TODO:
-test checksum
+semisync upstream
+repl group
+verify checksum
 rewrite server id
-heartbeat
 erase checksum
 gtid
