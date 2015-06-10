@@ -44,8 +44,8 @@ type BinlogRelay struct {
 
 	fileIndex []BinlogIndexEntry
 	curFileId int
-
-	logger util.Logger
+	semisync  bool
+	logger    util.Logger
 }
 
 type writeTask struct {
@@ -54,14 +54,16 @@ type writeTask struct {
 	pos    int64
 	size   uint32
 	seq    byte
+	ack    bool
 }
 
-func (self *BinlogRelay) Init(name string, client mysql.Client, localDir string, startFile string) (err error) {
+func (self *BinlogRelay) Init(name string, client mysql.Client, localDir string, startFile string, semisync bool) (err error) {
 	self.name = name
 	self.client = client
 	self.localDir = localDir
 	self.startFile = startFile
 	self.fileIndex = make([]BinlogIndexEntry, 0, 16)
+	self.semisync = semisync
 	self.syncBinlog = 1
 
 	logPath := localDir + string(os.PathSeparator) + "relay.log"
@@ -191,6 +193,7 @@ func (self *BinlogRelay) writeBinlog(bufChanIn chan<- []byte, bufChanOut <-chan 
 	defer func() {
 		close(bufChanIn)
 		self.logger.Info("writer ended")
+		util.RecoverToError(&err)
 		if err != nil {
 			self.logger.Error("writer: " + err.Error())
 		}
@@ -204,17 +207,11 @@ func (self *BinlogRelay) writeBinlog(bufChanIn chan<- []byte, bufChanOut <-chan 
 			if f != nil {
 				f.Close()
 			}
-			f, err = self.getFileToWrite(task.name, task.pos)
-			if err != nil {
-				return
-			}
+			f = util.Assert1(self.getFileToWrite(task.name, task.pos)).(*os.File)
 			name = task.name
 		}
 		//self.logger.Info("write at %d", task.pos)
-		_, err = f.WriteAt(task.buffer[:task.size], task.pos)
-		if err != nil {
-			return
-		}
+		_ = util.Assert1(f.WriteAt(task.buffer[:task.size], task.pos))
 		eventSize += task.size
 		if seq != task.seq { // next event
 			//self.logger.Info("append event %d", task.seq)
@@ -222,7 +219,10 @@ func (self *BinlogRelay) writeBinlog(bufChanIn chan<- []byte, bufChanOut <-chan 
 			ib++
 			if ib >= self.syncBinlog {
 				//self.logger.Info("sync file")
-				f.Sync()
+				util.Assert0(f.Sync())
+				if self.semisync && task.ack {
+					self.client.SendSemisyncAck(task.name, uint64(task.pos))
+				}
 				self.appendEvent(eventSize)
 				ib = 0
 			}
@@ -237,6 +237,7 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<- w
 	defer func() {
 		close(bufChanOut)
 		self.logger.Info("dumper ended")
+		util.RecoverToError(&err)
 		if err != nil {
 			self.logger.Error("dumper: " + err.Error())
 		}
@@ -244,70 +245,68 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<- w
 	if self.startPos < mysql.LOG_POS_START {
 		self.startPos = mysql.LOG_POS_START
 	}
-	stream := self.client.DumpBinlog(mysql.ComBinglogDump{
+	stream := util.Assert1(self.client.DumpBinlog(mysql.ComBinglogDump{
 		BinlogFilename: self.startFile,
 		BinlogPos:      self.startPos,
 		ServerId:       self.client.ServerId,
-	})
-
+	}, self.semisync)).(mysql.BinlogEventStream)
+	self.semisync = stream.IsSemisync()
 	filename := self.startFile
 	hasBinlogChecksum := false
 	curPos := self.startPos
 
 	self.logger.Info("dumper start at %s:%d", filename, curPos)
 
-	for event := range stream.GetChan() {
+	for event := stream.Next(); event != nil; event = stream.Next() {
 		event.HasChecksum = hasBinlogChecksum
 		self.logger.Info(fmt.Sprintf("event: { %s }", event.String()))
 		switch event.EventType {
 		case mysql.FORMAT_DESCRIPTION_EVENT:
 			var formatDescription mysql.FormatDescriptionEvent
-			formatDescription.Parse(&event, self.client.Buffer[:])
+			formatDescription.Parse(event, self.client.Buffer[:])
 			hasBinlogChecksum = (formatDescription.ChecksumAlgorism == 1)
 
 		case mysql.ROTATE_EVENT:
 			// change to next file!
 			var rotate mysql.RotateEvent
-			err = rotate.Parse(&event, self.client.Buffer[:])
-			if err != nil {
-				return
-			}
+			util.Assert0(rotate.Parse(event, self.client.Buffer[:]))
 			filename = rotate.Name
 			curPos = uint32(rotate.Position)
 			self.logger.Info("rotate event: %s:%d", filename, curPos)
 		}
-		err = event.Reset(false)
-		if err != nil {
-			return
-		}
+		util.Assert0(event.Reset(false))
 		reader := event.GetReader(self.client.Conn, self.client.Buffer[:])
 		if event.IsFake() {
 			continue
 		}
-		io.CopyN(ioutil.Discard, &reader, 1) //discard first ok byte
+		_ = util.Assert1(io.CopyN(ioutil.Discard, &reader, 1)) //discard first ok byte
+		need_ack := false
+		if stream.IsSemisync() {
+			var semi_info [2]byte
+			// see https://dev.mysql.com/doc/internals/en/semi-sync-binlog-event.html
+			_ = util.Assert1(reader.Read(semi_info[:]))
+			if semi_info[0] != '\xef' {
+				//
+			}
+			if semi_info[1]&0x01 != 0 {
+				need_ack = true
+			}
+		}
 		n := 0
 		for {
 			buffer := <-bufChanIn
 			n, err = reader.Read(buffer)
 			if n > 0 {
-				self.logger.Info("writeTask: {name:%s, pos:%d, size:%d, bufsize:%d}", filename, curPos, n, len(buffer))
+				//self.logger.Info("writeTask: {name:%s, pos:%d, size:%d, bufsize:%d}", filename, curPos, n, len(buffer))
 				bufChanOut <- writeTask{
-					name:   filename,
-					buffer: buffer,
-					size:   uint32(n),
-					seq:    event.PacketSeq,
-					pos:    int64(curPos),
+					name: filename, buffer: buffer, size: uint32(n), seq: event.PacketSeq, pos: int64(curPos), ack: need_ack,
 				}
 				curPos += uint32(n)
 			}
-			if err != nil {
-				if err == io.EOF {
-					break
-				} else {
-					self.logger.Error(err.Error())
-					return
-				}
+			if err == io.EOF {
+				break
 			}
+			util.Assert0(err)
 		}
 	}
 	err = stream.GetError()

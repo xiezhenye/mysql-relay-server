@@ -59,7 +59,6 @@ func (self *Peer) Auth() (err error) {
 		err = mysql.WritePacketTo(&errPacket, self.Conn, self.Buffer[:])
 		return
 	}
-
 	fmt.Println(self.RemoteIP())
 	handshake := mysql.BuildHandShakePacket(self.Server.Config.Server.Version, self.ConnId)
 	err = mysql.WritePacketTo(&handshake, self.Conn, self.Buffer[:])
@@ -80,7 +79,7 @@ func (self *Peer) Auth() (err error) {
 			authed = mysql.CheckAuth(handshake.AuthString, hash2[:], []byte(auth.AuthResponse))
 		}
 	}
-	fmt.Println(authed)
+	//fmt.Println(authed)
 	if authed {
 		okPacket := mysql.OkPacket{}
 		okPacket.PacketSeq = auth.PacketSeq + 1
@@ -147,9 +146,10 @@ func (self *Server) StartUpstreams() (err error) {
 		if err != nil {
 			return
 		}
-		self.Upstreams[name] = new(relay.BinlogRelay)
-		self.Upstreams[name].Init(name, c, upstreamConfig.LocalDir, upstreamConfig.StartFile)
-		go self.Upstreams[name].Run()
+		relay := new(relay.BinlogRelay)
+		relay.Init(name, c, upstreamConfig.LocalDir, upstreamConfig.StartFile, upstreamConfig.Semisync)
+		go relay.Run()
+		self.Upstreams[name] = relay
 	}
 	return
 }

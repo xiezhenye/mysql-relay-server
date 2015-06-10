@@ -21,6 +21,7 @@ type UpstreamConfig struct {
 	Username   string
 	Password   string
 	ServerId   uint32
+	Semisync   bool
 }
 
 type UserConfig struct {

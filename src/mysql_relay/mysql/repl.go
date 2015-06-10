@@ -6,6 +6,7 @@ import (
 	"hash/crc32"
 	"io"
 	"io/ioutil"
+	"mysql_relay/util"
 	"strconv"
 	"strings"
 )
@@ -89,6 +90,25 @@ type BinlogEventPacket struct {
 	Flags     uint16
 	//
 	HasChecksum bool
+}
+
+//https://dev.mysql.com/doc/internals/en/semi-sync-ack-packet.html
+//   payload:
+//     1                  [ef]
+//     8                  log position
+//     string             log filename
+type SemisyncAckPacket struct {
+	PacketHeader
+	Position uint64
+	Name     string
+}
+
+func (self *SemisyncAckPacket) ToBuffer(buffer []byte) (writen int, err error) {
+	buffer[0] = '\xef'
+	ENDIAN.PutUint64(buffer[1:], self.Position)
+	writen = 9
+	writen += copy(buffer[9:], []byte(self.Name))
+	return
 }
 
 func (self *BinlogEventPacket) String() string {
@@ -309,86 +329,86 @@ func (self *QueryEvent) Parse(packet *BinlogEventPacket, buffer []byte) (err err
 	return
 }
 
-func DumpBinlogTo(cmdBinlogDump ComBinglogDump, readWriter io.ReadWriter, ret chan<- BinlogEventPacket, buffer []byte) (err error) {
-	defer close(ret)
-	cmdPacket := CommandPacket{Command: &cmdBinlogDump}
-	err = WritePacketTo(&cmdPacket, readWriter, buffer)
-	if err != nil {
+func readEventHeader(readWriter io.ReadWriter, buffer []byte, expectedSeq byte) (header PacketHeader, err error) {
+	defer util.RecoverToError(&err)
+	header = util.Assert1(ReadPacketHeader(readWriter)).(PacketHeader)
+	if header.PacketSeq != expectedSeq {
+		err = PACKET_SEQ_NOT_CORRECT
 		return
 	}
-	seq := byte(0)
-	for {
-		seq++
-		var header PacketHeader
-		header, err = ReadPacketHeader(readWriter)
-		if err != nil {
-			return
-		}
-		if header.PacketSeq != seq {
-			err = PACKET_SEQ_NOT_CORRECT
-			return
-		}
-		err = ReadPacket(header, readWriter, buffer)
-		if err != nil {
-			return
-		}
-		if buffer[0] != GRP_OK {
-			var errPacket ErrPacket
-			errPacket.PacketHeader = header
-			_, err = errPacket.FromBuffer(buffer)
-			if err != nil {
-				return
-			}
-			err = errPacket.ToError()
-			return
-		}
-		var event BinlogEventPacket
-		event.PacketHeader = header
-		_, err = event.FromBuffer(buffer)
-		if err != nil {
-			return
-		}
-		ret <- event
-		reader := event.GetReader(readWriter, buffer)
-		io.Copy(ioutil.Discard, &reader)
+	util.Assert0(ReadPacket(header, readWriter, buffer))
+	if buffer[0] != GRP_OK {
+		var errPacket ErrPacket
+		errPacket.PacketHeader = header
+		_ = util.Assert1(errPacket.FromBuffer(buffer))
+		err = errPacket.ToError()
 	}
 	return
 }
 
 type BinlogEventStream struct {
-	ret     chan BinlogEventPacket
-	errs    chan error
-	canRead chan struct{}
-}
-
-func (self *BinlogEventStream) GetChan() <-chan BinlogEventPacket {
-	return self.ret
+	curEvent BinlogEventPacket
+	ret      chan *BinlogEventPacket
+	canRead  chan struct{}
+	semisync bool
+	errs     error
 }
 
 func (self *BinlogEventStream) GetError() error {
-	err, _ := <-self.errs
-	return err
+	return self.errs
 }
 
-func (self *Client) DumpBinlog(cmdBinlogDump ComBinglogDump) (ret BinlogEventStream) {
-	var err error
-	_, err = self.Command(&QueryCommand{Query: "SET @master_binlog_checksum='NONE';"})
-	if err != nil {
-		ret.errs <- err
-		close(ret.errs)
-		close(ret.canRead)
-		return
-	}
-	ret.ret = make(chan BinlogEventPacket)
-	ret.errs = make(chan error)
-	//ret.canRead = make(chan struct{})
-	go func() {
-		err := DumpBinlogTo(cmdBinlogDump, self.Conn, ret.ret, self.Buffer[:])
+func (self *BinlogEventStream) IsSemisync() bool {
+	return self.semisync
+}
+
+func (self *BinlogEventStream) Next() *BinlogEventPacket {
+	self.canRead <- struct{}{}
+	return <-self.ret
+}
+
+func (self *Client) DumpBinlog(cmdBinlogDump ComBinglogDump, semisync bool) (ret BinlogEventStream, err error) {
+	ret.ret = make(chan *BinlogEventPacket)
+	defer func() {
+		util.RecoverToError(&err)
 		if err != nil {
-			ret.errs <- err
+			close(ret.ret)
 		}
-		close(ret.errs)
-		close(ret.canRead)
+	}()
+	_ = util.Assert1(self.Command(&QueryCommand{Query: "SET @master_binlog_checksum='NONE';"}))
+	if semisync {
+		_, semi_err := self.Command(&QueryCommand{Query: "SET @rpl_semi_sync_slave = 1;"})
+		ret.semisync = (semi_err == nil)
+	}
+	cmdPacket := CommandPacket{Command: &cmdBinlogDump}
+	util.Assert0(WritePacketTo(&cmdPacket, self.Conn, self.Buffer[:]))
+
+	go func() {
+		defer func() {
+			close(ret.ret)
+			util.RecoverToError(&ret.errs)
+		}()
+		seq := byte(0)
+		for {
+			var event BinlogEventPacket
+			<-ret.canRead
+			reader := event.GetReader(self.Conn, self.Buffer[:])
+			io.Copy(ioutil.Discard, &reader)
+
+			seq++
+			header := util.Assert1(readEventHeader(self.Conn, self.Buffer[:], seq)).(PacketHeader)
+			event.PacketHeader = header
+			_ = util.Assert1(event.FromBuffer(self.Buffer[:]))
+			ret.ret <- &event //
+		}
 	}()
 	return
+}
+
+func (self *Client) SendSemisyncAck(name string, position uint64) error {
+	var buffer [64]byte
+	// response of ack packet will be process in binlog dump
+	// it is difficute to process here because when 'start slave'
+	// there is no indivisual ok packet for the ack
+	return WritePacketTo(&SemisyncAckPacket{Name: name, Position: position}, self.Conn, buffer[:])
 }

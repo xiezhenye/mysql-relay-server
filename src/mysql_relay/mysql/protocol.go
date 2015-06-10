@@ -79,7 +79,6 @@ func WritePacketTo(packet OutputPacket, writer io.Writer, buffer []byte) (err er
 	packet.GetHeader().PacketLength = uint32(writen)
 	uint32Header := packet.GetHeader().ToUint32()
 	ENDIAN.PutUint32(buffer, uint32Header)
-	//err = binary.Write(writer, ENDIAN, uint32Header)
 	if err != nil {
 		return
 	}
