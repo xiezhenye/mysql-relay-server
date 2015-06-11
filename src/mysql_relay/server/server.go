@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 type Server struct {
@@ -50,6 +51,7 @@ func (self *Peer) RemoteIP() string {
 }
 
 func (self *Peer) Auth() (err error) {
+	defer util.RecoverToError(&err)
 	if !self.Server.CheckHost(self.RemoteIP()) {
 		errPacket := mysql.ErrPacket{
 			ErrorCode:    mysql.ER_HOST_NOT_PRIVILEGED,
@@ -59,25 +61,17 @@ func (self *Peer) Auth() (err error) {
 		err = mysql.WritePacketTo(&errPacket, self.Conn, self.Buffer[:])
 		return
 	}
-	fmt.Println(self.RemoteIP())
+	//fmt.Println(self.RemoteIP())
 	handshake := mysql.BuildHandShakePacket(self.Server.Config.Server.Version, self.ConnId)
-	err = mysql.WritePacketTo(&handshake, self.Conn, self.Buffer[:])
-	fmt.Println(handshake)
-	if err != nil {
-		return
-	}
+	util.Assert0(mysql.WritePacketTo(&handshake, self.Conn, self.Buffer[:]))
+	//fmt.Println(handshake)
 	var auth mysql.AuthPacket
-	err = mysql.ReadPacketFrom(&auth, self.Conn, self.Buffer[:])
-	if err != nil {
-		return
-	}
+	util.Assert0(mysql.ReadPacketFrom(&auth, self.Conn, self.Buffer[:]))
 	user, ok := self.Server.Config.Users[auth.Username]
 	authed := false
-	if ok {
-		if hostContains(user.Host, self.RemoteIP()) {
-			hash2 := mysql.Hash2(user.Password)
-			authed = mysql.CheckAuth(handshake.AuthString, hash2[:], []byte(auth.AuthResponse))
-		}
+	if ok && hostContains(user.Host, self.RemoteIP()) {
+		hash2 := mysql.Hash2(user.Password)
+		authed = mysql.CheckAuth(handshake.AuthString, hash2[:], []byte(auth.AuthResponse))
 	}
 	//fmt.Println(authed)
 	if authed {
@@ -142,14 +136,31 @@ func (self *Server) StartUpstreams() (err error) {
 			Password:   upstreamConfig.Password,
 			ServerId:   upstreamConfig.ServerId,
 		}
-		err = c.Connect()
-		if err != nil {
-			return
-		}
-		relay := new(relay.BinlogRelay)
-		relay.Init(name, c, upstreamConfig.LocalDir, upstreamConfig.StartFile, upstreamConfig.Semisync)
-		go relay.Run()
-		self.Upstreams[name] = relay
+		go func() {
+			nTry := uint32(0)
+			for {
+				if nTry < upstreamConfig.MaxRetryTimes {
+					err := c.Connect()
+					if err != nil {
+						time.Sleep(time.Duration(upstreamConfig.RetryInterval) * time.Second)
+						nTry++
+						continue
+					} else {
+						nTry = uint32(0)
+						break
+					}
+				} else {
+					break
+				}
+				relay := new(relay.BinlogRelay)
+				err = relay.Init(name, c, upstreamConfig.LocalDir, upstreamConfig.StartFile, upstreamConfig.Semisync)
+				if err != nil {
+					return
+				}
+				self.Upstreams[name] = relay
+				_ = relay.Run()
+			}
+		}()
 	}
 	return
 }
@@ -252,6 +263,10 @@ func (peer *Peer) onCmdRegisterSlave(cmdPacket *mysql.BaseCommandPacket) (err er
 }
 
 func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error) {
+	defer func() {
+		util.RecoverToError(&err)
+		fmt.Printf("cmd_binlog_dump error: %s\n", peer.RemoteAddr(), err.Error())
+	}()
 	dump := mysql.ComBinglogDump{}
 	dump.FromBuffer(peer.Buffer[:cmdPacket.PacketLength])
 	relay := peer.GetRelay()
@@ -260,10 +275,10 @@ func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error
 	if currentIndex < 0 {
 		// binlog not exists
 		fmt.Printf("peer %s: binlog not exists\n", peer.RemoteAddr())
+		// TODO: wait for binlog
 		// TODO: return error code
 		return
 	}
-	// TODO: send fake binlog description event and rotate event
 	currentPos := dump.BinlogPos
 	relayIndex, relayPos := relay.CurrentPosition()
 	peer.seq = cmdPacket.PacketSeq + 1
@@ -279,31 +294,20 @@ func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error
 		}
 		currentFilePath := relay.NameToPath(binlog.Name)
 		fmt.Printf("peer %s: open %s\n", peer.RemoteAddr(), currentFilePath)
-		file, err = os.Open(currentFilePath)
-		if err != nil {
-			return err
-		}
+		file = util.Assert1(os.Open(currentFilePath)).(*os.File)
 		fmt.Printf("peer %s: send fake RotateEvent\n", peer.RemoteAddr())
-		peer.sendFakeRotateEvent(relay.NameByIndex(currentIndex), uint64(currentPos))
+		util.Assert0(peer.sendFakeRotateEvent(relay.NameByIndex(currentIndex), uint64(currentPos)))
 		endPos := binlog.Size
 		if currentPos > mysql.LOG_POS_START {
 			fmt.Printf("peer %s: send fake FormatDescriptionEvent\n", peer.RemoteAddr())
-			err = peer.sendFakeFormatDescriptionEvent(file)
-			if err != nil {
-				fmt.Printf("peer %s err: %s\n", peer.RemoteAddr(), err.Error())
-				return
-			}
+			util.Assert0(peer.sendFakeFormatDescriptionEvent(file))
 		}
 		for {
-			err = peer.sendBinlog(file, currentPos, endPos)
-			if err != nil {
-				return
-			}
+			util.Assert0(peer.sendBinlog(file, currentPos, endPos))
 			if currentIndex < relayIndex {
 				break // not last file
 			}
 			currentPos = endPos
-
 			relayIndex, relayPos = relay.CurrentPosition()
 			for currentIndex == relayIndex && currentPos >= relayPos {
 				//fmt.Printf("Waiting for update (%d, %d)!\n", relayIndex, relayPos)
@@ -382,6 +386,10 @@ func (peer *Peer) sendFakeFormatDescriptionEvent(file *os.File) (err error) {
 }
 
 func (peer *Peer) sendBinlog(file *os.File, from uint32, to uint32) (err error) {
+	defer func() {
+		util.RecoverToError(&err)
+		fmt.Printf("send binlog to %s error: %s\n", peer.RemoteAddr(), err.Error())
+	}()
 	fmt.Printf("peer %s: send %d:%d\n", peer.RemoteAddr(), from, to)
 	if from >= to {
 		return
@@ -391,11 +399,7 @@ func (peer *Peer) sendBinlog(file *os.File, from uint32, to uint32) (err error) 
 	pos := from
 	peer.Buffer[0] = '\x00'
 	for {
-		_, err = file.Read(peer.Buffer[1 : mysql.BinlogEventHeaderSize+1])
-		if err != nil {
-			fmt.Println(err.Error())
-			return
-		}
+		_ = util.Assert1(file.Read(peer.Buffer[1 : mysql.BinlogEventHeaderSize+1]))
 		var event mysql.BinlogEventPacket
 		event.FromBuffer(peer.Buffer[:])
 		event.PacketLength = event.EventSize + 1 //
@@ -408,12 +412,7 @@ func (peer *Peer) sendBinlog(file *os.File, from uint32, to uint32) (err error) 
 			// TODO: output mysql error pkt
 			return
 		}
-		err = event.Reset(false)
-		if err != nil {
-			//fmt.Println("reset error: " + err.Error())
-			return
-		}
-
+		util.Assert0(event.Reset(false))
 		reader := event.GetReader(file, peer.Buffer[:mysql.BinlogEventHeaderSize+1])
 		reader.WithProtocolHeader = true
 		n, err = io.Copy(peer.Conn, &reader)
@@ -436,6 +435,7 @@ func (peer *Peer) sendBinlog(file *os.File, from uint32, to uint32) (err error) 
 }
 
 func (peer *Peer) onCmdQuit(cmdPacket *mysql.BaseCommandPacket) (err error) {
+	// TODO: support quit command
 	return
 }
 

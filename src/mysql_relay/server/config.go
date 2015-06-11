@@ -14,18 +14,18 @@ type Config struct {
 }
 
 type UpstreamConfig struct {
-	Name       string
-	LocalDir   string
-	StartFile  string
-	ServerAddr string
-	Username   string
-	Password   string
-	ServerId   uint32
-	Semisync   bool
+	LocalDir      string
+	StartFile     string
+	ServerAddr    string
+	Username      string
+	Password      string
+	ServerId      uint32
+	Semisync      bool
+	RetryInterval uint32
+	MaxRetryTimes uint32
 }
 
 type UserConfig struct {
-	Name     string
 	Host     string
 	Password string
 	Upstream string
