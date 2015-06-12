@@ -367,7 +367,7 @@ func (self *BinlogEventStream) Next() *BinlogEventPacket {
 	return <-self.ret
 }
 
-func (self *Client) DumpBinlog(cmdBinlogDump ComBinglogDump, semisync bool) (ret BinlogEventStream, err error) {
+func (self *Client) DumpBinlog(cmdBinlogDump ComBinglogDump, semisync bool, heartbeatPeriod uint32) (ret BinlogEventStream, err error) {
 	ret.ret = make(chan *BinlogEventPacket)
 	defer func() {
 		util.RecoverToError(&err)
@@ -376,6 +376,7 @@ func (self *Client) DumpBinlog(cmdBinlogDump ComBinglogDump, semisync bool) (ret
 		}
 	}()
 	_ = util.Assert1(self.Command(&QueryCommand{Query: "SET @master_binlog_checksum='NONE';"}))
+	_ = util.Assert1(self.Command(&QueryCommand{Query: fmt.Sprintf("SET @master_heartbeat_period=%d;", heartbeatPeriod)}))
 	if semisync {
 		_, semi_err := self.Command(&QueryCommand{Query: "SET @rpl_semi_sync_slave = 1;"})
 		ret.semisync = (semi_err == nil)

@@ -42,10 +42,12 @@ type BinlogRelay struct {
 	client mysql.Client
 	buf    [32768]byte
 
-	fileIndex []BinlogIndexEntry
-	curFileId int
-	semisync  bool
-	logger    util.Logger
+	fileIndex       []BinlogIndexEntry
+	curFileId       int
+	semisync        bool
+	heartbeatPeriod uint32
+	networkTimeout  uint32
+	logger          util.Logger
 }
 
 type writeTask struct {
@@ -57,13 +59,12 @@ type writeTask struct {
 	ack    bool
 }
 
-func (self *BinlogRelay) Init(name string, client mysql.Client, localDir string, startFile string, semisync bool) (err error) {
+func (self *BinlogRelay) Init(name string, client mysql.Client, localDir string, startFile string) (err error) {
 	self.name = name
 	self.client = client
 	self.localDir = localDir
 	self.startFile = startFile
 	self.fileIndex = make([]BinlogIndexEntry, 0, 16)
-	self.semisync = semisync
 	self.syncBinlog = 1
 
 	logPath := localDir + string(os.PathSeparator) + "relay.log"
@@ -76,6 +77,14 @@ func (self *BinlogRelay) Init(name string, client mysql.Client, localDir string,
 	self.logger.Info("relay inited")
 	self.ReloadPos()
 	return
+}
+
+func (self *BinlogRelay) SetSemisync(b bool) {
+	self.semisync = b
+}
+
+func (self *BinlogRelay) SetHeartbeatPeriod(n uint32) {
+	self.heartbeatPeriod = n
 }
 
 func (self *BinlogRelay) ReloadPos() error {
@@ -249,7 +258,7 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<- w
 		BinlogFilename: self.startFile,
 		BinlogPos:      self.startPos,
 		ServerId:       self.client.ServerId,
-	}, self.semisync)).(mysql.BinlogEventStream)
+	}, self.semisync, self.heartbeatPeriod)).(mysql.BinlogEventStream)
 	self.semisync = stream.IsSemisync()
 	filename := self.startFile
 	hasBinlogChecksum := false

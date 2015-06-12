@@ -153,10 +153,11 @@ func (self *Server) StartUpstreams() (err error) {
 					break
 				}
 				relay := new(relay.BinlogRelay)
-				err = relay.Init(name, c, upstreamConfig.LocalDir, upstreamConfig.StartFile, upstreamConfig.Semisync)
+				err = relay.Init(name, c, upstreamConfig.LocalDir, upstreamConfig.StartFile)
 				if err != nil {
 					return
 				}
+				relay.SetSemisync(upstreamConfig.Semisync)
 				self.Upstreams[name] = relay
 				_ = relay.Run()
 			}

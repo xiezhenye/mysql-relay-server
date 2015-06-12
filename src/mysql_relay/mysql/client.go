@@ -1,7 +1,9 @@
 package mysql
 
 import (
+	"io"
 	"net"
+	"time"
 	//    "fmt"
 	//	"bufio"
 )
@@ -17,6 +19,7 @@ type Client struct {
 	ServerId   uint32
 	Seq        byte
 	Conn       net.Conn
+	NetTimeout uint32
 	Buffer     [CLIENT_BUFFER_SIZE]byte
 }
 
