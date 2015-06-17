@@ -138,6 +138,7 @@ func ReadPacketHeader(reader io.Reader) (header PacketHeader, err error) {
 	if err != nil {
 		return
 	}
+	fmt.Println(t)
 	header.FromUint32(t)
 	return
 }

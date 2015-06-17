@@ -130,6 +130,7 @@ func (self *Server) Init() {
 
 func (self *Server) StartUpstreams() (err error) {
 	for name, upstreamConfig := range self.Config.Upstreams {
+		fmt.Println("starting " + name)
 		c := mysql.Client{
 			ServerAddr: upstreamConfig.ServerAddr,
 			Username:   upstreamConfig.Username,
@@ -140,19 +141,24 @@ func (self *Server) StartUpstreams() (err error) {
 			nTry := uint32(0)
 			for {
 				if nTry < upstreamConfig.MaxRetryTimes {
+					fmt.Printf("try connecting %d\n", nTry)
 					err := c.Connect()
 					if err != nil {
+						fmt.Println("connect failed")
 						time.Sleep(time.Duration(upstreamConfig.RetryInterval) * time.Second)
 						nTry++
 						continue
 					} else {
 						nTry = uint32(0)
-						break
 					}
 				} else {
 					break
 				}
+				fmt.Printf("connected %d\n", nTry)
 				relay := new(relay.BinlogRelay)
+				if upstreamConfig.ReadTimeout > 0 {
+					c.Conn = util.NewTimeoutConn(c.Conn, upstreamConfig.ReadTimeout)
+				}
 				err = relay.Init(name, c, upstreamConfig.LocalDir, upstreamConfig.StartFile)
 				if err != nil {
 					return
@@ -161,6 +167,7 @@ func (self *Server) StartUpstreams() (err error) {
 				self.Upstreams[name] = relay
 				_ = relay.Run()
 			}
+			fmt.Println("upstram ended")
 		}()
 	}
 	return

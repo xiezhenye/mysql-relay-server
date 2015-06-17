@@ -27,43 +27,46 @@ const (
 const LOG_POS_START = 4
 
 const (
-	UNKNOWN_EVENT            byte = 0x00
-	START_EVENT_V3                = 0x01
-	QUERY_EVENT                   = 0x02
-	STOP_EVENT                    = 0x03
-	ROTATE_EVENT                  = 0x04
-	INTVAR_EVENT                  = 0x05
-	LOAD_EVENT                    = 0x06
-	SLAVE_EVENT                   = 0x07
-	CREATE_FILE_EVENT             = 0x08
-	APPEND_BLOCK_EVENT            = 0x09
-	EXEC_LOAD_EVENT               = 0x0a
-	DELETE_FILE_EVENT             = 0x0b
-	NEW_LOAD_EVENT                = 0x0c
-	RAND_EVENT                    = 0x0d
-	USER_VAR_EVENT                = 0x0e
-	FORMAT_DESCRIPTION_EVENT      = 0x0f
-	XID_EVENT                     = 0x10
-	BEGIN_LOAD_QUERY_EVENT        = 0x11
-	EXECUTE_LOAD_QUERY_EVENT      = 0x12
-	TABLE_MAP_EVENT               = 0x13
-	WRITE_ROWS_EVENTv0            = 0x14
-	UPDATE_ROWS_EVENTv0           = 0x15
-	DELETE_ROWS_EVENTv0           = 0x16
-	WRITE_ROWS_EVENTv1            = 0x17
-	UPDATE_ROWS_EVENTv1           = 0x18
-	DELETE_ROWS_EVENTv1           = 0x19
-	INCIDENT_EVENT                = 0x1a
-	HEARTBEAT_EVENT               = 0x1b
-	IGNORABLE_EVENT               = 0x1c
-	ROWS_QUERY_EVENT              = 0x1d
-	WRITE_ROWS_EVENTv2            = 0x1e
-	UPDATE_ROWS_EVENTv2           = 0x1f
-	DELETE_ROWS_EVENTv2           = 0x20
-	GTID_EVENT                    = 0x21
-	ANONYMOUS_GTID_EVENT          = 0x22
-	PREVIOUS_GTIDS_EVENT          = 0x23
-	BINLOG_EVENT_END              = 0x24
+	UNKNOWN_EVENT             byte = 0x00
+	START_EVENT_V3                 = 0x01
+	QUERY_EVENT                    = 0x02
+	STOP_EVENT                     = 0x03
+	ROTATE_EVENT                   = 0x04
+	INTVAR_EVENT                   = 0x05
+	LOAD_EVENT                     = 0x06
+	SLAVE_EVENT                    = 0x07
+	CREATE_FILE_EVENT              = 0x08
+	APPEND_BLOCK_EVENT             = 0x09
+	EXEC_LOAD_EVENT                = 0x0a
+	DELETE_FILE_EVENT              = 0x0b
+	NEW_LOAD_EVENT                 = 0x0c
+	RAND_EVENT                     = 0x0d
+	USER_VAR_EVENT                 = 0x0e
+	FORMAT_DESCRIPTION_EVENT       = 0x0f
+	XID_EVENT                      = 0x10
+	BEGIN_LOAD_QUERY_EVENT         = 0x11
+	EXECUTE_LOAD_QUERY_EVENT       = 0x12
+	TABLE_MAP_EVENT                = 0x13
+	WRITE_ROWS_EVENTv0             = 0x14
+	UPDATE_ROWS_EVENTv0            = 0x15
+	DELETE_ROWS_EVENTv0            = 0x16
+	WRITE_ROWS_EVENTv1             = 0x17
+	UPDATE_ROWS_EVENTv1            = 0x18
+	DELETE_ROWS_EVENTv1            = 0x19
+	INCIDENT_EVENT                 = 0x1a
+	HEARTBEAT_EVENT                = 0x1b
+	IGNORABLE_EVENT                = 0x1c
+	ROWS_QUERY_EVENT               = 0x1d
+	WRITE_ROWS_EVENTv2             = 0x1e
+	UPDATE_ROWS_EVENTv2            = 0x1f
+	DELETE_ROWS_EVENTv2            = 0x20
+	GTID_EVENT                     = 0x21
+	ANONYMOUS_GTID_EVENT           = 0x22
+	PREVIOUS_GTIDS_EVENT           = 0x23
+	TRANSACTION_CONTEXT_EVENT      = 0x24
+	VIEW_CHANGE_EVENT              = 0x25
+	XA_PREPARE_LOG_EVENT           = 0x26
+	BINLOG_EVENT_END               = 0x27
 )
 
 const BinlogEventHeaderSize = 19
@@ -78,7 +81,8 @@ var EventNames = [...]string{"UNKNOWN_EVENT", "START_EVENT_V3", "QUERY_EVENT",
 	"UPDATE_ROWS_EVENTv1", "DELETE_ROWS_EVENTv1", "INCIDENT_EVENT",
 	"HEARTBEAT_EVENT", "IGNORABLE_EVENT", "ROWS_QUERY_EVENT", "WRITE_ROWS_EVENTv2",
 	"UPDATE_ROWS_EVENTv2", "DELETE_ROWS_EVENTv2", "GTID_EVENT",
-	"ANONYMOUS_GTID_EVENT", "PREVIOUS_GTIDS_EVENT", "BINLOG_EVENT_END"}
+	"ANONYMOUS_GTID_EVENT", "PREVIOUS_GTIDS_EVENT", "TRANSACTION_CONTEXT_EVENT",
+	"VIEW_CHANGE_EVENT", "XA_PREPARE_LOG_EVENT", "BINLOG_EVENT_END"}
 
 type BinlogEventPacket struct {
 	PayloadPacket
@@ -90,7 +94,14 @@ type BinlogEventPacket struct {
 	Flags     uint16
 	//
 	HasChecksum bool
+	Semisync    byte
 }
+
+const (
+	SEMISYNC_NO   byte = 0
+	SEMISYNC_ACK       = 1
+	SEMISYNC_SKIP      = 2
+)
 
 //https://dev.mysql.com/doc/internals/en/semi-sync-ack-packet.html
 //   payload:
@@ -144,14 +155,18 @@ func NextBinlogName(name string) (next string, err error) {
 }
 
 func (self *BinlogEventPacket) FromBuffer(buffer []byte) (read int, err error) {
-	self.Timestamp = ENDIAN.Uint32(buffer[1:])
-	self.EventType = buffer[5]
-	self.ServerId = ENDIAN.Uint32(buffer[6:])
-	self.EventSize = ENDIAN.Uint32(buffer[10:])
-	self.LogPos = ENDIAN.Uint32(buffer[14:])
-	self.Flags = ENDIAN.Uint16(buffer[18:])
-	self.BodyLength = int(self.PacketLength) - BinlogEventHeaderSize - 1
-	read = BinlogEventHeaderSize + 1
+	p := 1
+	if self.Semisync != SEMISYNC_NO {
+		p = 3
+	}
+	self.Timestamp = ENDIAN.Uint32(buffer[p:])
+	self.EventType = buffer[p+4]
+	self.ServerId = ENDIAN.Uint32(buffer[p+5:])
+	self.EventSize = ENDIAN.Uint32(buffer[p+9:])
+	self.LogPos = ENDIAN.Uint32(buffer[p+13:])
+	self.Flags = ENDIAN.Uint16(buffer[p+17:])
+	self.BodyLength = int(self.PacketLength) - BinlogEventHeaderSize - p
+	read = BinlogEventHeaderSize + p
 	return
 }
 
@@ -255,11 +270,11 @@ func (self *RotateEventPacket) ToBuffer(buffer []byte) (writen int, err error) {
 	writen += n
 	if self.HasChecksum {
 		checksum := crc32.ChecksumIEEE(buffer[1:writen])
-		fmt.Printf("crc32 of %v == %08x\n", buffer[1:writen], checksum)
+		//fmt.Printf("crc32 of %v == %08x\n", buffer[1:writen], checksum)
 		ENDIAN.PutUint32(buffer[writen:], checksum)
 		writen += 4
 	}
-	fmt.Printf("rotate event packet: %dbytes\n", writen)
+	//fmt.Printf("rotate event packet: %dbytes\n", writen)
 	return
 }
 
@@ -329,23 +344,6 @@ func (self *QueryEvent) Parse(packet *BinlogEventPacket, buffer []byte) (err err
 	return
 }
 
-func readEventHeader(readWriter io.ReadWriter, buffer []byte, expectedSeq byte) (header PacketHeader, err error) {
-	defer util.RecoverToError(&err)
-	header = util.Assert1(ReadPacketHeader(readWriter)).(PacketHeader)
-	if header.PacketSeq != expectedSeq {
-		err = PACKET_SEQ_NOT_CORRECT
-		return
-	}
-	util.Assert0(ReadPacket(header, readWriter, buffer))
-	if buffer[0] != GRP_OK {
-		var errPacket ErrPacket
-		errPacket.PacketHeader = header
-		_ = util.Assert1(errPacket.FromBuffer(buffer))
-		err = errPacket.ToError()
-	}
-	return
-}
-
 type BinlogEventStream struct {
 	curEvent BinlogEventPacket
 	ret      chan *BinlogEventPacket
@@ -367,8 +365,30 @@ func (self *BinlogEventStream) Next() *BinlogEventPacket {
 	return <-self.ret
 }
 
-func (self *Client) DumpBinlog(cmdBinlogDump ComBinglogDump, semisync bool, heartbeatPeriod uint32) (ret BinlogEventStream, err error) {
+func readEventPacketHeader(readWriter io.ReadWriter, buffer []byte, expectedSeq byte) (header PacketHeader, err error) {
+	defer util.RecoverToError(&err)
+	header = util.Assert1(ReadPacketHeader(readWriter)).(PacketHeader)
+	if header.PacketSeq != expectedSeq {
+		err = PACKET_SEQ_NOT_CORRECT
+		return
+	}
+
+	util.Assert0(ReadPacket(header, readWriter, buffer))
+	if buffer[0] != GRP_OK {
+		var errPacket ErrPacket
+		errPacket.PacketHeader = header
+		_ = util.Assert1(errPacket.FromBuffer(buffer))
+		err = errPacket.ToError()
+	}
+
+	return
+}
+
+func (self *Client) DumpBinlog(cmdBinlogDump ComBinglogDump, semisync bool, heartbeatPeriod uint32) (ret *BinlogEventStream, err error) {
+	//fmt.Printf("DumpBinlog %v!!! ...", cmdBinlogDump)
+	ret = new(BinlogEventStream)
 	ret.ret = make(chan *BinlogEventPacket)
+	ret.canRead = make(chan struct{})
 	defer func() {
 		util.RecoverToError(&err)
 		if err != nil {
@@ -381,6 +401,7 @@ func (self *Client) DumpBinlog(cmdBinlogDump ComBinglogDump, semisync bool, hear
 		_, semi_err := self.Command(&QueryCommand{Query: "SET @rpl_semi_sync_slave = 1;"})
 		ret.semisync = (semi_err == nil)
 	}
+
 	cmdPacket := CommandPacket{Command: &cmdBinlogDump}
 	util.Assert0(WritePacketTo(&cmdPacket, self.Conn, self.Buffer[:]))
 
@@ -390,26 +411,36 @@ func (self *Client) DumpBinlog(cmdBinlogDump ComBinglogDump, semisync bool, hear
 			util.RecoverToError(&ret.errs)
 		}()
 		seq := byte(0)
+		<-ret.canRead
 		for {
 			var event BinlogEventPacket
-			<-ret.canRead
-			reader := event.GetReader(self.Conn, self.Buffer[:])
-			io.Copy(ioutil.Discard, &reader)
-
 			seq++
-			header := util.Assert1(readEventHeader(self.Conn, self.Buffer[:], seq)).(PacketHeader)
+			header := util.Assert1(readEventPacketHeader(self.Conn, self.Buffer[:], seq)).(PacketHeader)
 			event.PacketHeader = header
+			event.Semisync = SEMISYNC_NO
+			if ret.semisync {
+				// see https://dev.mysql.com/doc/internals/en/semi-sync-binlog-event.html
+				if self.Buffer[1] != '\xef' {
+					// TODO: error!
+				}
+				if self.Buffer[2]&0x01 != 0 {
+					event.Semisync = SEMISYNC_ACK
+				} else {
+					event.Semisync = SEMISYNC_SKIP
+				}
+			}
+
 			_ = util.Assert1(event.FromBuffer(self.Buffer[:]))
 			ret.ret <- &event //
+			<-ret.canRead
+			packetReader := event.GetReader(self.Conn, self.Buffer[:])
+			io.Copy(ioutil.Discard, &packetReader)
 		}
 	}()
 	return
 }
 
 func (self *Client) SendSemisyncAck(name string, position uint64) error {
-	var buffer [64]byte
-	// response of ack packet will be process in binlog dump
-	// it is difficute to process here because when 'start slave'
-	// there is no indivisual ok packet for the ack
+	var buffer [64]byte // TODO: test if buffer size is enough to contain name
 	return WritePacketTo(&SemisyncAckPacket{Name: name, Position: position}, self.Conn, buffer[:])
 }

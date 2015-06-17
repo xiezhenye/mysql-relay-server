@@ -258,7 +258,7 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<- w
 		BinlogFilename: self.startFile,
 		BinlogPos:      self.startPos,
 		ServerId:       self.client.ServerId,
-	}, self.semisync, self.heartbeatPeriod)).(mysql.BinlogEventStream)
+	}, self.semisync, self.heartbeatPeriod)).(*mysql.BinlogEventStream)
 	self.semisync = stream.IsSemisync()
 	filename := self.startFile
 	hasBinlogChecksum := false
@@ -283,23 +283,17 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<- w
 			curPos = uint32(rotate.Position)
 			self.logger.Info("rotate event: %s:%d", filename, curPos)
 		}
-		util.Assert0(event.Reset(false))
-		reader := event.GetReader(self.client.Conn, self.client.Buffer[:])
+
 		if event.IsFake() {
 			continue
 		}
-		_ = util.Assert1(io.CopyN(ioutil.Discard, &reader, 1)) //discard first ok byte
-		need_ack := false
-		if stream.IsSemisync() {
-			var semi_info [2]byte
-			// see https://dev.mysql.com/doc/internals/en/semi-sync-binlog-event.html
-			_ = util.Assert1(reader.Read(semi_info[:]))
-			if semi_info[0] != '\xef' {
-				//
-			}
-			if semi_info[1]&0x01 != 0 {
-				need_ack = true
-			}
+
+		util.Assert0(event.Reset(false))
+		reader := event.GetReader(self.client.Conn, self.client.Buffer[:])
+		if event.Semisync == mysql.SEMISYNC_NO {
+			io.CopyN(ioutil.Discard, &reader, 1) // Ok byte
+		} else {
+			io.CopyN(ioutil.Discard, &reader, 3) // Ok byte and semisync bytes
 		}
 		n := 0
 		for {
@@ -308,7 +302,12 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<- w
 			if n > 0 {
 				//self.logger.Info("writeTask: {name:%s, pos:%d, size:%d, bufsize:%d}", filename, curPos, n, len(buffer))
 				bufChanOut <- writeTask{
-					name: filename, buffer: buffer, size: uint32(n), seq: event.PacketSeq, pos: int64(curPos), ack: need_ack,
+					name:   filename,
+					buffer: buffer,
+					size:   uint32(n),
+					seq:    event.PacketSeq,
+					pos:    int64(curPos),
+					ack:    event.Semisync == mysql.SEMISYNC_ACK,
 				}
 				curPos += uint32(n)
 			}

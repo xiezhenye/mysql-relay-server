@@ -23,6 +23,7 @@ type UpstreamConfig struct {
 	Semisync      bool
 	RetryInterval uint32
 	MaxRetryTimes uint32
+	ReadTimeout   uint32
 }
 
 type UserConfig struct {

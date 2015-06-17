@@ -1,9 +1,7 @@
 package mysql
 
 import (
-	"io"
 	"net"
-	"time"
 	//    "fmt"
 	//	"bufio"
 )
