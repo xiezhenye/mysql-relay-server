@@ -13,7 +13,7 @@ type Logger struct {
 }
 
 func (self *Logger) ToFile(file string) (err error) {
-	self.file, err = os.OpenFile(file, os.O_APPEND|os.O_RDWR, 0644)
+	self.file, err = os.OpenFile(file, os.O_APPEND|os.O_RDWR|os.O_CREATE, 0644)
 	return
 }
 
