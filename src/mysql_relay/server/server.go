@@ -212,15 +212,17 @@ func (self *Server) BeginListen() (err error) {
 		}
 		connId := self.GetNextConnId()
 		self.Peers[connId] = &Peer{ConnId: connId, Conn: conn, Server: self}
-		go self.handle(self.Peers[connId])
+		go func() {
+			defer func() {
+				self.Peers[connId].Close()
+				self.Closed <- connId
+			}()
+			self.handle(self.Peers[connId])
+		}()
 	}
 }
 
 func (self *Server) handle(peer *Peer) {
-	defer func() {
-		peer.Close()
-		self.Closed <- peer.ConnId
-	}()
 	err := peer.Auth()
 	if err != nil {
 		return
