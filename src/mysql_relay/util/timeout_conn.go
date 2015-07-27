@@ -11,7 +11,7 @@ type TimeoutConn struct {
 	timeout time.Duration
 	lock    sync.Mutex
 }
-
+type ioFunc func(buf []byte) (n int, err error)
 func (self *TimeoutConn) io(fn ioFunc, buf []byte) (n int, err error) {
 	self.lock.Lock()
 	defer self.lock.Unlock()
