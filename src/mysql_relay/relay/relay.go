@@ -230,7 +230,7 @@ func (self *BinlogRelay) writeBinlog(bufChanIn chan<- []byte, bufChanOut <-chan 
 				//self.logger.Info("sync file")
 				util.Assert0(f.Sync())
 				if self.semisync && task.ack {
-					self.client.SendSemisyncAck(task.name, uint64(task.pos))
+					go self.client.SendSemisyncAck(task.name, uint64(task.pos))
 				}
 				self.appendEvent(eventSize)
 				ib = 0
