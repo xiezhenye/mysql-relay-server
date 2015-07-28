@@ -1,7 +1,5 @@
 package util
 
-import ()
-
 type NullAbleString struct {
 	str    string
 	isNull bool

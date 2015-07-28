@@ -386,11 +386,11 @@ func readEventPacketHeader(readWriter io.ReadWriter, buffer []byte, expectedSeq 
 
 func (self *Client) DumpBinlog(cmdBinlogDump ComBinglogDump, semisync bool, heartbeatPeriod uint32) (ret *BinlogEventStream, err error) {
 	//fmt.Printf("DumpBinlog %v!!! ...", cmdBinlogDump)
+	defer util.RecoverToError(&err)
 	ret = new(BinlogEventStream)
 	ret.ret = make(chan *BinlogEventPacket)
 	ret.canRead = make(chan struct{})
 	defer func() {
-		util.RecoverToError(&err)
 		if err != nil {
 			close(ret.ret)
 		}
@@ -406,10 +406,8 @@ func (self *Client) DumpBinlog(cmdBinlogDump ComBinglogDump, semisync bool, hear
 	util.Assert0(WritePacketTo(&cmdPacket, self.Conn, self.Buffer[:]))
 
 	go func() {
-		defer func() {
-			close(ret.ret)
-			util.RecoverToError(&ret.errs)
-		}()
+		defer close(ret.ret)
+		defer util.RecoverToError(&ret.errs)
 		seq := byte(0)
 		<-ret.canRead
 		for {

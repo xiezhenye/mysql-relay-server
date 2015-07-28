@@ -72,7 +72,7 @@ func (self *BinlogRelay) Init(name string, client mysql.Client, localDir string,
 	if err != nil {
 		return
 	}
-	self.logger.SetToStderr(true)
+	self.logger.SetToStderr(false)
 	self.logger.SetPrefix("[upstream:" + name + "]")
 	self.logger.Info("relay inited")
 	self.ReloadPos()
@@ -202,11 +202,12 @@ func (self *BinlogRelay) writeBinlog(bufChanIn chan<- []byte, bufChanOut <-chan 
 	defer func() {
 		close(bufChanIn)
 		self.logger.Info("writer ended")
-		util.RecoverToError(&err)
 		if err != nil {
 			self.logger.Error("writer: " + err.Error())
 		}
 	}()
+	defer util.RecoverToError(&err)
+
 	ib := 0
 	eventSize := uint32(0)
 	for task := range bufChanOut {
@@ -246,11 +247,12 @@ func (self *BinlogRelay) dumpBinlog(bufChanIn <-chan []byte, bufChanOut chan<- w
 	defer func() {
 		close(bufChanOut)
 		self.logger.Info("dumper ended")
-		util.RecoverToError(&err)
 		if err != nil {
 			self.logger.Error("dumper: " + err.Error())
 		}
 	}()
+	defer util.RecoverToError(&err)
+
 	if self.startPos < mysql.LOG_POS_START {
 		self.startPos = mysql.LOG_POS_START
 	}

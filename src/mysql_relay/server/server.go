@@ -273,10 +273,8 @@ func (peer *Peer) onCmdRegisterSlave(cmdPacket *mysql.BaseCommandPacket) (err er
 }
 
 func (peer *Peer) onCmdBinlogDump(cmdPacket *mysql.BaseCommandPacket) (err error) {
-	defer func() {
-		util.RecoverToError(&err)
-		fmt.Printf("cmd_binlog_dump error: %s\n", peer.RemoteAddr(), err.Error())
-	}()
+	defer util.RecoverToError(&err)
+
 	dump := mysql.ComBinglogDump{}
 	dump.FromBuffer(peer.Buffer[:cmdPacket.PacketLength])
 	relay := peer.GetRelay()
@@ -396,10 +394,8 @@ func (peer *Peer) sendFakeFormatDescriptionEvent(file *os.File) (err error) {
 }
 
 func (peer *Peer) sendBinlog(file *os.File, from uint32, to uint32) (err error) {
-	defer func() {
-		util.RecoverToError(&err)
-		fmt.Printf("send binlog to %s error: %s\n", peer.RemoteAddr(), err.Error())
-	}()
+	defer util.RecoverToError(&err)
+
 	fmt.Printf("peer %s: send %d:%d\n", peer.RemoteAddr(), from, to)
 	if from >= to {
 		return
