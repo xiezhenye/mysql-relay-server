@@ -396,7 +396,7 @@ func (peer *Peer) sendFakeFormatDescriptionEvent(file *os.File) (err error) {
 func (peer *Peer) sendBinlog(file *os.File, from uint32, to uint32) (err error) {
 	defer util.RecoverToError(&err)
 
-	fmt.Printf("peer %s: send %d:%d\n", peer.RemoteAddr(), from, to)
+	//fmt.Printf("peer %s: send %d:%d\n", peer.RemoteAddr(), from, to)
 	if from >= to {
 		return
 	}

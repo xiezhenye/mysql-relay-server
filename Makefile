@@ -5,13 +5,14 @@ default_target: all
 ENV=GOPATH="$(CURDIR)" GOBIN="$(CURDIR)/bin"
 
 bin/server:
-	$(ENV) go install src/main/server.go	
+	$(ENV) go install src/main/server.go
 
-all:bin/server
+bin/rollback:
+	$(ENV) go install src/main/rollback.go
+
+all:bin/server,bin/rollback
 .PHONY : all
 
 clean:
 	echo $(ENV)
-	rm -f $(CURDIR)/bin/server
-
-
+	rm -f $(CURDIR)/bin/server $(CURDIR)/bin/rollback
